@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SingBox-YUY 单文件发行版 v0.3.0
+# SingBox-YUY 单文件发行版 v0.3.1
 # 由 dist/build.sh 生成，请勿手工修改；改源码后重跑 build。
 set -euo pipefail
 
@@ -12,7 +12,7 @@ else
     SB_HOME="${SB_HOME:-${HOME:-/tmp}/.singbox-yuy}"
 fi
 export SB_HOME
-SB_DIST_VERSION="0.3.0"
+SB_DIST_VERSION="0.3.1"
 SB_DIST_URL="${SB_DIST_URL:-https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/dist/sb}"
 export SB_DIST_VERSION SB_DIST_URL
 # 自定位：PATH 里能找到就用绝对路径，否则回退 $0（./dist/sb、bash dist/sb 等）
@@ -518,7 +518,7 @@ eSA9IG91dC5zdGRvdXQKICAgIGlmIGZtdCA9PSAidXJpIjoKICAgICAgICBib2R5ID0gYmFzZTY0
 LmI2NGVuY29kZSgKICAgICAgICAgICAgYm9keS5lbmNvZGUoInV0Zi04IikpLmRlY29kZSgiYXNj
 aWkiKQogICAgcmV0dXJuIDIwMCwgY3R5cGUsIGJvZHkKCgpjbGFzcyBIYW5kbGVyKEJhc2VIVFRQ
 UmVxdWVzdEhhbmRsZXIpOgogICAgc2VydmVyX3ZlcnNpb24gPSAiU2luZ0JveC1ZVVktU3ViLzAu
-My4wIgoKICAgIGRlZiBsb2dfbWVzc2FnZShzZWxmLCAqYXJncyk6CiAgICAgICAgc3lzLnN0ZGVy
+My4xIgoKICAgIGRlZiBsb2dfbWVzc2FnZShzZWxmLCAqYXJncyk6CiAgICAgICAgc3lzLnN0ZGVy
 ci53cml0ZSgiW3N1YnNydl0gJXMgJXNcbiIgJSAoc2VsZi5jb21tYW5kLCBzZWxmLnBhdGgpKQoK
 ICAgIGRlZiBfc2VuZChzZWxmLCBjb2RlLCBjdHlwZSwgYm9keSk6CiAgICAgICAgZGF0YSA9IGJv
 ZHkuZW5jb2RlKCJ1dGYtOCIpCiAgICAgICAgc2VsZi5zZW5kX3Jlc3BvbnNlKGNvZGUpCiAgICAg
@@ -792,7 +792,7 @@ __sb_ensure_payloads
 #   SB_BIN  sing-box 二进制路径（默认 /usr/local/bin/sing-box）
 
 # shellcheck disable=SC2034
-SB_VERSION="0.3.0"
+SB_VERSION="0.3.1"
 SB_ETC="${SB_ETC:-/etc/sing-box}"
 SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 NODES_JSON="$SB_ETC/nodes.json"
@@ -2701,7 +2701,12 @@ cmd_self_update() {
         || { rm -f "$tmp"; die "下载的文件不是有效的 SingBox-YUY 单文件"; }
     new_ver="$(sed -n 's/^SB_DIST_VERSION="\(.*\)"$/\1/p' "$tmp" | head -1)"
     [ -n "$new_ver" ] || new_ver="未知"
-    if [ "$new_ver" = "$old_ver" ]; then
+    # 按内容校验和判断是否需要更新：版本号相同但内容不同（同版本热修复）也要更新；
+    # sha256sum 不可用时保守地执行更新（宁可多下一次，不跳过可能的修复）
+    local old_sum new_sum
+    old_sum="$(sha256sum "$self" 2>/dev/null | awk '{print $1}')"
+    new_sum="$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$old_sum" ] && [ "$old_sum" = "$new_sum" ]; then
         rm -f "$tmp"; log_ok "已是最新版（v$old_ver），无需更新"; return 0
     fi
     cat "$tmp" > "$self" || { rm -f "$tmp"; die "写入 $self 失败"; }
@@ -2709,7 +2714,11 @@ cmd_self_update() {
     chmod +x "$self"
     # 删除版本标记，下次运行时重新释放 payload
     rm -f "${SB_HOME:?SB_HOME 未设置}/.dist_version"
-    log_ok "已更新：v$old_ver -> v$new_ver（下次运行时自动释放新 payload）"
+    if [ "$new_ver" = "$old_ver" ]; then
+        log_ok "已更新到 v$new_ver（同版本热修复，内容已变化，下次运行自动释放新 payload）"
+    else
+        log_ok "已更新：v$old_ver -> v$new_ver（下次运行时自动释放新 payload）"
+    fi
 }
 
 cmd_check() {

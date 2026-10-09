@@ -423,6 +423,16 @@ if SB_HOME="$SBHOME" SB_DIST_URL="file://$SBHOME/fake-bad" bash "$TESTDIR/sbself
 else
     ok "self-update 拒绝非法文件"
 fi
+# 同版本但内容不同（热修复）必须更新：伪造一个同版本不同内容的 bundle
+cp "$PROJ/dist/sb" "$TESTDIR/sbself3"; chmod +x "$TESTDIR/sbself3"
+cp "$PROJ/dist/sb" "$SBHOME/fake-samever"
+printf '# hotfix line\n' >> "$SBHOME/fake-samever"
+if SB_HOME="$SBHOME" SB_DIST_URL="file://$SBHOME/fake-samever" bash "$TESTDIR/sbself3" self-update >/dev/null 2>&1; then
+    grep -q '# hotfix line' "$TESTDIR/sbself3" \
+        && ok "同版本热修复：内容不同则更新" || fail "同版本热修复未替换内容"
+else
+    fail "同版本热修复 self-update 执行失败"
+fi
 # repo 模式必须拒绝 self-update
 if bash "$PROJ/sb-mgr" self-update >/dev/null 2>&1; then
     fail "repo 模式 self-update 应被拒绝"

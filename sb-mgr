@@ -97,7 +97,12 @@ cmd_self_update() {
         || { rm -f "$tmp"; die "下载的文件不是有效的 SingBox-YUY 单文件"; }
     new_ver="$(sed -n 's/^SB_DIST_VERSION="\(.*\)"$/\1/p' "$tmp" | head -1)"
     [ -n "$new_ver" ] || new_ver="未知"
-    if [ "$new_ver" = "$old_ver" ]; then
+    # 按内容校验和判断是否需要更新：版本号相同但内容不同（同版本热修复）也要更新；
+    # sha256sum 不可用时保守地执行更新（宁可多下一次，不跳过可能的修复）
+    local old_sum new_sum
+    old_sum="$(sha256sum "$self" 2>/dev/null | awk '{print $1}')"
+    new_sum="$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$old_sum" ] && [ "$old_sum" = "$new_sum" ]; then
         rm -f "$tmp"; log_ok "已是最新版（v$old_ver），无需更新"; return 0
     fi
     cat "$tmp" > "$self" || { rm -f "$tmp"; die "写入 $self 失败"; }
@@ -105,7 +110,11 @@ cmd_self_update() {
     chmod +x "$self"
     # 删除版本标记，下次运行时重新释放 payload
     rm -f "${SB_HOME:?SB_HOME 未设置}/.dist_version"
-    log_ok "已更新：v$old_ver -> v$new_ver（下次运行时自动释放新 payload）"
+    if [ "$new_ver" = "$old_ver" ]; then
+        log_ok "已更新到 v$new_ver（同版本热修复，内容已变化，下次运行自动释放新 payload）"
+    else
+        log_ok "已更新：v$old_ver -> v$new_ver（下次运行时自动释放新 payload）"
+    fi
 }
 
 cmd_check() {
