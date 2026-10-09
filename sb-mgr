@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# sb-mgr - SingBox-YUY 主入口：CLI 参数解析 / 无参数进 TUI
+set -euo pipefail
+
+MGR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB="$MGR_DIR/lib"
+
+# shellcheck source=lib/common.sh
+. "$LIB/common.sh"
+. "$LIB/envcheck.sh"
+. "$LIB/install.sh"
+. "$LIB/inbound.sh"
+. "$LIB/warp.sh"
+. "$LIB/route.sh"
+. "$LIB/export.sh"
+. "$LIB/sub.sh"
+. "$LIB/crypto.sh"
+. "$LIB/tui.sh"
+
+usage() {
+    cat <<EOF
+SingBox-YUY v$SBYUY_VERSION - 现代化 sing-box 一键安装/运维工具
+
+用法：
+  sb-mgr install [--proto hy2|reality|tuic|anytls|ss] [--port N] [--domain D] [--sni S] [--yes]
+  sb-mgr envcheck | add --proto P [...] | list | del <id> | link <id> [--qr]
+  sb-mgr warp | route-unlock | route-lock
+  sb-mgr relay-add (--link URI | --from-node <id> [--host H])
+  sb-mgr relay-route --tag <tag> --geosite <g1,g2> | sb-mgr relay-del --tag <tag> | sb-mgr relay-list
+  sb-mgr export --format uri|singbox|clash [--out FILE] [--id ID]
+  sb-mgr sub [start|stop|restart|regen] | sb-mgr sub-regen
+  sb-mgr node-export --out FILE --password PW | sb-mgr node-import --in FILE --password PW [--yes]
+  sb-mgr check | update | set-host <h> | tui | version | help
+
+无参数时进入 TUI 交互菜单。
+EOF
+}
+
+cmd_add() { # add --proto P [协议参数...]
+    ensure_etc
+    local proto=""
+    local rest=()
+    while [ $# -gt 0 ]; do case "$1" in
+        --proto) proto="$2"; shift 2;;
+        *) rest+=("$1"); shift;;
+    esac; done
+    case "$proto" in
+        reality) add_reality "${rest[@]}" ;;
+        hy2)     add_hy2 "${rest[@]}" ;;
+        tuic)    add_tuic "${rest[@]}" ;;
+        anytls)  add_anytls "${rest[@]}" ;;
+        ss|ss2022) add_ss2022 "${rest[@]}" ;;
+        *) die "未知协议：$proto（reality|hy2|tuic|anytls|ss2022）" ;;
+    esac
+}
+
+cmd_install() { # install [--proto P] [--port N] [--domain D] [--sni S] [--yes]
+    local proto="" port="" domain="" sni="" yes=0
+    while [ $# -gt 0 ]; do case "$1" in
+        --proto)  proto="$2"; shift 2;;
+        --port)   port="$2"; shift 2;;
+        --domain) domain="$2"; shift 2;;
+        --sni)    sni="$2"; shift 2;;
+        --yes)    yes=1; SB_MGR_YES=1; export SB_MGR_YES; shift;;
+        *) die "install 未知参数：$1";;
+    esac; done
+    local im_args=()
+    [ "$yes" = "1" ] && im_args+=(--yes)
+    install_main "${im_args[@]}"
+    envcheck_main || true
+    if [ -n "$proto" ]; then
+        local args=(--proto "$proto" --yes)
+        [ -n "$port" ] && args+=(--port "$port")
+        [ -n "$domain" ] && args+=(--domain "$domain")
+        [ -n "$sni" ] && args+=(--sni "$sni")
+        cmd_add "${args[@]}"
+    fi
+}
+
+cmd_check() {
+    ensure_etc
+    [ -x "$SB_BIN" ] || die "未找到 sing-box：$SB_BIN（先 sb-mgr install）"
+    python3 "$(builder_py)" || die "配置渲染失败"
+    "$SB_BIN" check -c "$CONFIG_JSON" && log_ok "配置校验通过"
+}
+
+cmd_set_host() {
+    ensure_etc
+    [ -n "${1:-}" ] || die "用法：sb-mgr set-host <IP或域名>"
+    json_set "$SETTINGS_JSON" --arg h "$1" '.host = $h'
+    log_ok "订阅/链接 HOST 已设为：$1"
+}
+
+main() {
+    local cmd="${1:-}"
+    case "$cmd" in
+        ""|tui)            tui_main ;;
+        help|--help|-h)    usage ;;
+        version|--version) echo "SingBox-YUY v$SBYUY_VERSION" ;;
+        install)  shift; cmd_install "$@" ;;
+        update)   update_main ;;
+        envcheck) envcheck_main ;;
+        add)      shift; cmd_add "$@" ;;
+        list)     ensure_etc; list_inbounds ;;
+        del)      ensure_etc; del_inbound "${2:-}" ;;
+        link)     shift; link_main "$@" ;;
+        warp)     warp_main ;;
+        route-unlock) route_unlock_main ;;
+        route-lock)   route_lock_main ;;
+        relay-add)   shift; relay_add_main "$@" ;;
+        relay-route) shift; relay_route_main "$@" ;;
+        relay-del)   shift; relay_del_main "$@" ;;
+        relay-list)  relay_list_main ;;
+        export)   shift; export_main "$@" ;;
+        sub)      shift; sub_main "$@" ;;
+        sub-regen) sub_regen_main ;;
+        node-export) shift; crypto_export_main "$@" ;;
+        node-import) shift; crypto_import_main "$@" ;;
+        check)    cmd_check ;;
+        set-host) shift; cmd_set_host "$@" ;;
+        *) log_err "未知命令：$cmd"; usage; exit 2 ;;
+    esac
+}
+
+main "$@"

@@ -1,0 +1,15 @@
+[Unit]
+Description=SingBox-YUY subscription HTTP service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Environment=SB_ETC=/etc/sing-box
+Environment=SBYUY_MGR=/opt/SingBox-YUY/sb-mgr
+ExecStart=/usr/bin/python3 /opt/SingBox-YUY/lib/subsrv.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
