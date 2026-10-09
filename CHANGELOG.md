@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## v0.3.2（2026-10-09）
+
+### 修复
+- `sb self-update` 下载时对 http(s) URL 自动加时间戳穿透 CDN 缓存：raw.githubusercontent.com 有约 5 分钟缓存，之前刚推送完就 self-update 会拿到旧文件并误判"已是最新"。
+
 ## v0.3.1（2026-10-09）
 
 ### 修复

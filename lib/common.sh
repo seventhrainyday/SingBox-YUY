@@ -5,7 +5,7 @@
 #   SB_BIN  sing-box 二进制路径（默认 /usr/local/bin/sing-box）
 
 # shellcheck disable=SC2034
-SB_VERSION="0.3.1"
+SB_VERSION="0.3.2"
 SB_ETC="${SB_ETC:-/etc/sing-box}"
 SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 NODES_JSON="$SB_ETC/nodes.json"

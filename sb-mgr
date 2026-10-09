@@ -89,8 +89,19 @@ cmd_self_update() {
         || die "目标不是 SingBox-YUY 单文件（$self），拒绝更新"
     local old_ver="$SB_DIST_VERSION" new_ver tmp
     tmp="$(mktemp)" || die "mktemp 失败"
+    # raw.githubusercontent.com 有约 5 分钟 CDN 缓存；http(s) 下载加时间戳穿透，
+    # 避免刚推送完就 self-update 时拿到旧文件。file:// 等其他协议不受影响。
+    local url="$SB_DIST_URL"
+    case "$url" in
+        http*://*)
+            case "$url" in
+                *\?*) url="${url}&_t=$(date +%s)" ;;
+                *)      url="${url}?_t=$(date +%s)" ;;
+            esac
+            ;;
+    esac
     log_info "下载新版：$SB_DIST_URL"
-    if ! curl -fsSL --retry 2 -m 120 "$SB_DIST_URL" -o "$tmp"; then
+    if ! curl -fsSL --retry 2 -m 120 "$url" -o "$tmp"; then
         rm -f "$tmp"; die "下载失败，请检查网络或 SB_DIST_URL"
     fi
     grep -q '^SB_DIST_VERSION=' "$tmp" \
