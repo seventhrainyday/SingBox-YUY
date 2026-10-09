@@ -38,6 +38,8 @@
 curl -fsSL https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/install.sh | sudo bash
 ```
 
+> 已是 root（提示符为 `#`）请去掉 `sudo`，直接 `| bash`；精简镜像若无 `sudo` 也一样去掉（脚本内会提示）。
+
 带参数一键装（参数透传给 `sb-mgr install`，示例：直接装好 Hysteria2 节点）：
 
 ```bash

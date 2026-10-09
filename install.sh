@@ -12,12 +12,20 @@ set -euo pipefail
 
 REPO_URL="https://github.com/seventhrainyday/SingBox-YUY.git"
 TARBALL_URL="https://codeload.github.com/seventhrainyday/SingBox-YUY/tar.gz/refs/heads/main"
+RAW_URL="https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/install.sh"
 INSTALL_DIR="/opt/SingBox-YUY"
 
 log()  { printf '[install] %s\n' "$*"; }
 die()  { printf '[install][ERR] %s\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "请用 root 运行，例如：curl -fsSL <url> | sudo bash"
+if [ "$(id -u)" -ne 0 ]; then
+    # 非 root：有 sudo 指引用 sudo，没 sudo（如精简镜像）指引切 root
+    if command -v sudo >/dev/null 2>&1; then
+        die "请用 root 运行，例如：curl -fsSL $RAW_URL | sudo bash"
+    else
+        die "请用 root 运行（本机无 sudo，请先 su - 切换到 root 再执行）：curl -fsSL $RAW_URL | bash"
+    fi
+fi
 
 detect_pm() {
     # 精简版包管理器检测（与 lib/common.sh 的 detect_pm 同逻辑）
