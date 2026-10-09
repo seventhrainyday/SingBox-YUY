@@ -176,3 +176,89 @@ update_main() {
     log_info "当前：$cur，最新：$tag，开始更新..."
     install_main --yes
 }
+
+uninstall_main() { # [--yes] [--purge-binary]
+    # 一键卸载：停服务 -> 删 unit/init -> 清 cron -> 备份配置 -> 删目录
+    # 路径可用环境变量覆盖（供测试）：SB_UNIT_DIR / SB_INITD_DIR / SB_CRON_FILE /
+    #   SB_AUTOUPDATE_SCRIPT / SB_PERIODIC_DIR / SB_BACKUP_DIR
+    # 注意：sb 本体（/usr/local/bin/sb）永远不动；sing-box 二进制默认保留，
+    #   仅 --purge-binary 时删除。
+    local yes=0 purge=0
+    while [ $# -gt 0 ]; do case "$1" in
+        --yes)          yes=1; shift;;
+        --purge-binary) purge=1; shift;;
+        *) die "uninstall 未知参数：$1";;
+    esac; done
+    need_root
+    ensure_etc
+    local sub_svc="${SUB_SVC:-singbox-yuy-sub}"
+    local unit_dir="${SB_UNIT_DIR:-/etc/systemd/system}"
+    local initd_dir="${SB_INITD_DIR:-/etc/init.d}"
+    local cron_file="${SB_CRON_FILE:-/etc/crontab}"
+    local autoupdate="${SB_AUTOUPDATE_SCRIPT:-/usr/local/bin/singbox-auto-update}"
+    local periodic_dir="${SB_PERIODIC_DIR:-/etc/periodic/weekly}"
+    local backup_dir="${SB_BACKUP_DIR:-/tmp}"
+
+    if [ "$yes" != "1" ]; then
+        log_warn "将卸载 SingBox-YUY：停止服务、删除 $SB_ETC 配置、清理定时任务"
+        log_info "配置将先备份到 $backup_dir/singbox-yuy-backup-<日期>.tar.gz"
+        printf '确认卸载？[y/N] '; read -r ans
+        case "$ans" in [yY]*) ;; *) log_info "已取消"; return 0;; esac
+    fi
+
+    # 1. 停止并禁用服务（尽力而为）
+    if has_systemd; then
+        systemctl disable --now sing-box 2>/dev/null || true
+        systemctl disable --now "$sub_svc" 2>/dev/null || true
+    elif has_openrc; then
+        rc-service singbox stop 2>/dev/null || true
+        rc-update del singbox default 2>/dev/null || true
+        rc-service "$sub_svc" stop 2>/dev/null || true
+        rc-update del "$sub_svc" default 2>/dev/null || true
+    fi
+    log_ok "服务已停止"
+
+    # 2. 删除 unit / init 脚本
+    rm -f "$unit_dir/sing-box.service" "$unit_dir/${sub_svc}.service"
+    rm -f "$initd_dir/singbox" "$initd_dir/$sub_svc"
+    svc_daemon_reload
+    log_ok "服务定义已删除"
+
+    # 3. 清理定时任务
+    if [ -f "$cron_file" ] && grep -q "singbox-auto-update" "$cron_file" 2>/dev/null; then
+        sed -i '/singbox-auto-update/d' "$cron_file"
+        log_ok "已从 $cron_file 移除自动更新任务"
+    fi
+    if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -q "singbox-auto-update"; then
+        (crontab -l 2>/dev/null | grep -v "singbox-auto-update") | crontab -
+        log_ok "已从 root crontab 移除自动更新任务"
+    fi
+    rm -f "$periodic_dir/singbox-auto-update" "$autoupdate"
+
+    # 4. 备份配置
+    local stamp backup=""
+    stamp=$(date +%Y%m%d-%H%M%S)
+    if [ -d "$SB_ETC" ]; then
+        mkdir -p "$backup_dir"
+        backup="$backup_dir/singbox-yuy-backup-${stamp}.tar.gz"
+        tar -czf "$backup" -C "$(dirname "$SB_ETC")" "$(basename "$SB_ETC")" 2>/dev/null \
+            && log_ok "配置已备份：$backup" \
+            || { log_warn "备份失败，继续卸载"; backup=""; }
+    fi
+
+    # 5. 删除配置与 payload 目录
+    [ -n "$SB_ETC" ] && [ "$SB_ETC" != "/" ] && rm -rf "$SB_ETC"
+    if [ -n "${SB_HOME:-}" ] && [ "$SB_HOME" != "/" ] && [ -d "$SB_HOME" ]; then
+        rm -rf "$SB_HOME"
+    fi
+    log_ok "已删除 $SB_ETC${SB_HOME:+ 与 $SB_HOME}"
+
+    # 6. sing-box 二进制：默认保留
+    if [ "$purge" = "1" ]; then
+        rm -f "$SB_BIN"
+        log_ok "已删除 sing-box 二进制：$SB_BIN"
+    else
+        log_info "sing-box 二进制已保留（$SB_BIN）；彻底清除请加 --purge-binary"
+    fi
+    log_ok "SingBox-YUY 卸载完成${backup:+；备份在 $backup}"
+}

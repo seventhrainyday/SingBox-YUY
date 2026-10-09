@@ -22,8 +22,10 @@ usage() {
 SingBox-YUY v$SB_VERSION - 现代化 sing-box 一键安装/运维工具
 
 用法：
-  sb-mgr install [--proto hy2|reality|tuic|anytls|ss] [--port N] [--domain D] [--sni S] [--yes]
+  sb-mgr install [--proto hy2|reality|tuic|anytls|trojan|ss] [--port N] [--domain D] [--sni S] [--yes]
+  sb-mgr uninstall [--yes] [--purge-binary]
   sb-mgr envcheck | add --proto P [...] | list | del <id> | link <id> [--qr]
+  sb-mgr node-modify --id <id> [--remark R] [--port P] [--sni S] [--password PW] [--uuid U] [--regen-key] [--ports 起始:结束]
   sb-mgr warp | route-unlock | route-lock
   sb-mgr relay-add (--link URI | --from-node <id> [--host H])
   sb-mgr relay-route --tag <tag> --geosite <g1,g2> | sb-mgr relay-del --tag <tag> | sb-mgr relay-list
@@ -50,8 +52,9 @@ cmd_add() { # add --proto P [协议参数...]
         hy2)     add_hy2 "${rest[@]}" ;;
         tuic)    add_tuic "${rest[@]}" ;;
         anytls)  add_anytls "${rest[@]}" ;;
+        trojan)  add_trojan "${rest[@]}" ;;
         ss|ss2022) add_ss2022 "${rest[@]}" ;;
-        *) die "未知协议：$proto（reality|hy2|tuic|anytls|ss2022）" ;;
+        *) die "未知协议：$proto（reality|hy2|tuic|anytls|trojan|ss2022）" ;;
     esac
 }
 
@@ -150,10 +153,12 @@ main() {
         version|--version) echo "SingBox-YUY v$SB_VERSION" ;;
         install)  shift; cmd_install "$@" ;;
         update)   update_main ;;
+        uninstall) shift; uninstall_main "$@" ;;
         envcheck) envcheck_main ;;
         add)      shift; cmd_add "$@" ;;
         list)     ensure_etc; list_inbounds ;;
         del)      ensure_etc; del_inbound "${2:-}" ;;
+        node-modify) shift; node_modify "$@" ;;
         link)     shift; link_main "$@" ;;
         warp)     warp_main ;;
         route-unlock) route_unlock_main ;;

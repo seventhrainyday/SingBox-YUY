@@ -6,7 +6,7 @@
 #   builder.py client     输出 sing-box 客户端 JSON（stdout）
 #   builder.py clash      输出 Mihomo YAML（stdout）
 #   builder.py --test --out-dir DIR
-#       生成示例：server-full.json（5 协议 + warp + 解锁路由 + 中转示例）、
+#       生成示例：server-full.json（6 协议 + hy2 跳跃 + warp + 解锁路由 + 中转示例）、
 #                server-basic.json（最小：单 reality）、client.json
 #       并打印清单，供 tests/run.sh 逐个 sing-box check。
 
@@ -109,6 +109,12 @@ def build_inbound(node):
             "padding_scheme": [],
             "tls": _tls_block(node),
         })
+    if proto == "trojan":
+        return dict(base, **{
+            "type": "trojan",
+            "users": [{"password": node["password"]}],
+            "tls": _tls_block(node),
+        })
     if proto == "ss2022":
         return dict(base, **{
             "type": "shadowsocks",
@@ -116,6 +122,42 @@ def build_inbound(node):
             "password": node["password"],
         })
     raise ValueError("未知协议: %s" % proto)
+
+
+# ---------------- Hysteria2 端口跳跃 ----------------
+# 实测结论（sing-box 1.14.3）：hysteria2 inbound 不支持任何跳跃字段
+# （udp_ports / server_ports 均为 unknown field），故服务端用"多 inbound
+# 监听"等效实现；客户端 outbound 原生支持 server_ports: "起始:结束"。
+
+def _hop_ports(node):
+    # -> 该节点跳跃端口列表（不含主端口校验，由调用方保证合法）
+    ports = node.get("ports", "") or ""
+    if node.get("proto") != "hy2" or not ports:
+        return []
+    s, e = ports.split(":")
+    return list(range(int(s), int(e) + 1))
+
+
+def build_hop_inbounds(node):
+    # hy2 跳跃端口的附加 inbound（每个端口一个监听，tag 后缀 -hop-<port>）
+    hops = _hop_ports(node)
+    if not hops:
+        return []
+    main_port = int(node["port"])
+    out = []
+    for p in hops:
+        if p == main_port:
+            continue  # 防御性：主端口已有 inbound，不重复监听
+        out.append({
+            "tag": "%s-hop-%d" % (node["tag"], p),
+            "type": "hysteria2",
+            "listen": "::",
+            "listen_port": p,
+            "users": [{"password": node["password"]}],
+            "ignore_client_bandwidth": False,
+            "tls": dict(_tls_block(node), alpn=["h3"]),
+        })
+    return out
 
 
 # ---------------- outbound / route ----------------
@@ -195,13 +237,18 @@ def validate(nodes):
     ports = {}
     tags = set()
     for n in nodes:
-        p = int(n["port"])
-        if p in ports:
-            raise ValueError("端口冲突：%d 已被节点 %s 占用" % (p, ports[p]))
-        ports[p] = n.get("id", n.get("tag"))
-        if n["tag"] in tags:
-            raise ValueError("tag 重复：%s" % n["tag"])
-        tags.add(n["tag"])
+        nid = n.get("id", n.get("tag"))
+        # 主端口 + 跳跃端口一并做冲突检查
+        for p in [int(n["port"])] + _hop_ports(n):
+            if p in ports:
+                raise ValueError("端口冲突：%d 已被节点 %s 占用" % (p, ports[p]))
+            ports[p] = nid
+        all_tags = [n["tag"]] + \
+            ["%s-hop-%d" % (n["tag"], p) for p in _hop_ports(n)]
+        for t in all_tags:
+            if t in tags:
+                raise ValueError("tag 重复：%s" % t)
+            tags.add(t)
 
 
 def build_server_config(nodes, settings):
@@ -221,6 +268,11 @@ def build_server_config(nodes, settings):
         ob["tag"] = r["tag"]
         outbounds.append(ob)
 
+    inbounds = []
+    for n in nodes:
+        inbounds.append(build_inbound(n))
+        inbounds.extend(build_hop_inbounds(n))
+
     cfg = {
         "log": {"level": "info", "timestamp": True},
         "dns": {
@@ -231,7 +283,7 @@ def build_server_config(nodes, settings):
             "final": "dns-direct",
             "strategy": "prefer_ipv4",
         },
-        "inbounds": [build_inbound(n) for n in nodes],
+        "inbounds": inbounds,
         "outbounds": outbounds,
         "route": build_route(settings),
     }
@@ -261,13 +313,17 @@ def _client_outbound(node, host):
         }
     if proto == "hy2":
         insecure = node.get("cert_type", "self") != "acme"
-        return {
+        ob = {
             "type": "hysteria2", "tag": tag,
             "server": host, "server_port": int(node["port"]),
             "password": node["password"],
             "tls": {"enabled": True, "server_name": node["sni"],
                     "insecure": insecure, "alpn": ["h3"]},
         }
+        if node.get("ports"):
+            # sing-box 1.14.3 实测：outbound 支持 server_ports: "起始:结束"
+            ob["server_ports"] = node["ports"]
+        return ob
     if proto == "tuic":
         insecure = node.get("cert_type", "self") != "acme"
         return {
@@ -285,6 +341,15 @@ def _client_outbound(node, host):
             "password": node["password"],
             "tls": {"enabled": True, "server_name": node["sni"],
                     "insecure": True},
+        }
+    if proto == "trojan":
+        insecure = node.get("cert_type", "self") != "acme"
+        return {
+            "type": "trojan", "tag": tag,
+            "server": host, "server_port": int(node["port"]),
+            "password": node["password"],
+            "tls": {"enabled": True, "server_name": node["sni"],
+                    "insecure": insecure},
         }
     if proto == "ss2022":
         return {
@@ -384,12 +449,16 @@ def build_clash_config(nodes, settings, host):
                                  "short-id": n["short_id"]},
             })
         elif proto == "hy2":
-            proxies.append({
+            hp = {
                 "name": name, "type": "hysteria2", "server": host,
                 "port": p, "password": n["password"], "sni": n["sni"],
                 "alpn": ["h3"],
                 "skip-cert-verify": n.get("cert_type", "self") != "acme",
-            })
+            }
+            if n.get("ports"):
+                # Mihomo hysteria2 ports 用 起始-结束 格式
+                hp["ports"] = n["ports"].replace(":", "-")
+            proxies.append(hp)
         elif proto == "tuic":
             proxies.append({
                 "name": name, "type": "tuic", "server": host, "port": p,
@@ -405,6 +474,13 @@ def build_clash_config(nodes, settings, host):
                 "name": name, "type": "anytls", "server": host, "port": p,
                 "password": n["password"], "sni": n["sni"],
                 "skip-cert-verify": True, "udp": True,
+            })
+        elif proto == "trojan":
+            proxies.append({
+                "name": name, "type": "trojan", "server": host, "port": p,
+                "password": n["password"], "sni": n["sni"],
+                "skip-cert-verify": n.get("cert_type", "self") != "acme",
+                "udp": True,
             })
         elif proto == "ss2022":
             proxies.append({
@@ -507,7 +583,7 @@ def parse_link(link):
                 "method": method, "password": password}
     if scheme == "hysteria2":
         insecure = q.get("insecure", "0") in ("1", "true")
-        return {
+        ob = {
             "type": "hysteria2",
             "server": u.hostname, "server_port": u.port or 443,
             "password": unquote(u.username or ""),
@@ -515,6 +591,10 @@ def parse_link(link):
                     "server_name": q.get("sni", u.hostname),
                     "insecure": insecure},
         }
+        if q.get("ports"):
+            # 端口跳跃：sing-box outbound 原生字段 server_ports（"起始:结束"）
+            ob["server_ports"] = q["ports"]
+        return ob
     if scheme == "tuic":
         insecure = q.get("allow_insecure", "0") in ("1", "true")
         alpn = [a for a in q.get("alpn", "h3").split(",") if a]
@@ -594,7 +674,7 @@ def sample_nodes():
         {"id": "aa02", "proto": "hy2", "tag": "hy2-8443", "port": 8443,
          "password": "testpassword1234", "sni": "test.example.com",
          "cert_type": "self", "cert_path": "/tmp/sb-mgr-test/cert.pem",
-         "key_path": "/tmp/sb-mgr-test/key.pem",
+         "key_path": "/tmp/sb-mgr-test/key.pem", "ports": "20000:20001",
          "remark": "测试-hy2", "created": ts},
         {"id": "aa03", "proto": "tuic", "tag": "tuic-9443", "port": 9443,
          "uuid": u2, "password": "tuicpw12345678", "sni": "test.example.com",
@@ -610,6 +690,11 @@ def sample_nodes():
          "method": "2022-blake3-aes-128-gcm",
          "password": base64.b64encode(b"0123456789abcdef").decode(),
          "remark": "测试-ss2022", "created": ts},
+        {"id": "aa06", "proto": "trojan", "tag": "trojan-9444", "port": 9444,
+         "password": "trojanpw123456", "sni": "www.sony.com",
+         "cert_type": "self", "cert_path": "/tmp/sb-mgr-test/cert.pem",
+         "key_path": "/tmp/sb-mgr-test/key.pem",
+         "remark": "测试-trojan", "created": ts},
     ]
 
 
@@ -653,7 +738,7 @@ def run_test(out_dir):
     full = build_server_config(nodes, settings)
     p1 = os.path.join(out_dir, "server-full.json")
     save_json(p1, full)
-    manifest.append(("server-full（5 协议 + warp + 解锁 + 中转）", p1))
+    manifest.append(("server-full（6 协议 + hy2 跳跃 + warp + 解锁 + 中转）", p1))
 
     basic = build_server_config([nodes[0]],
                                 {"host": "203.0.113.10", "unlock": False,

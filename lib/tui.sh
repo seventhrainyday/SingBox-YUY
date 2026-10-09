@@ -66,20 +66,26 @@ tui_add_node() {
         hy2 "Hysteria2" \
         tuic "TUIC v5" \
         anytls "AnyTLS" \
+        trojan "Trojan" \
         ss2022 "Shadowsocks 2022") || return 0
     local port remark
     case "$p" in
         reality) port=443;; hy2) port=8443;; tuic) port=443;;
-        anytls) port=8443;; ss2022) port=8388;;
+        anytls) port=8443;; trojan) port=443;; ss2022) port=8388;;
     esac
     port=$(tui_input "添加节点" "监听端口" "$port") || return 0
     remark=$(tui_input "添加节点" "备注（可空）" "") || remark=""
     case "$p" in
         reality) add_reality --port "$port" --remark "$remark" ;;
         hy2)
-            local sni
+            local sni hports
             sni=$(tui_input "Hysteria2" "TLS 域名/SNI" "www.sony.com") || return 0
-            add_hy2 --port "$port" --sni "$sni" --remark "$remark" ;;
+            hports=$(tui_input "Hysteria2" "端口跳跃区间 起始:结束（空=不启用）" "") || hports=""
+            if [ -n "$hports" ]; then
+                add_hy2 --port "$port" --sni "$sni" --remark "$remark" --ports "$hports"
+            else
+                add_hy2 --port "$port" --sni "$sni" --remark "$remark"
+            fi ;;
         tuic)
             local sni2
             sni2=$(tui_input "TUIC" "TLS 域名/SNI" "www.sony.com") || return 0
@@ -88,8 +94,54 @@ tui_add_node() {
             local sni3
             sni3=$(tui_input "AnyTLS" "TLS 域名/SNI" "www.microsoft.com") || return 0
             add_anytls --port "$port" --sni "$sni3" --remark "$remark" ;;
+        trojan)
+            local sni4
+            sni4=$(tui_input "Trojan" "TLS 域名/SNI" "www.sony.com") || return 0
+            add_trojan --port "$port" --sni "$sni4" --remark "$remark" ;;
         ss2022) add_ss2022 --port "$port" --remark "$remark" ;;
     esac
+    tui_pause
+}
+
+tui_modify_node() {
+    local id
+    id=$(tui_input "修改节点" "节点 ID（先用 列表 查看）" "") || return 0
+    [ -n "$id" ] || return 0
+    local node proto
+    node=$(node_json "$id") || return 0
+    proto=$(jq -r .proto <<<"$node")
+    tui_msg "当前节点" "$(jq -r '"协议: \(.proto)\n端口: \(.port)\n备注: \(.remark)\nSNI: \(.sni // "-")\n跳跃: \(.ports // "-")"' <<<"$node")"
+    local remark port sni password uuid ports
+    local args=(--id "$id")
+    remark=$(tui_input "修改节点" "新备注（空=不改）" "") || return 0
+    [ -n "$remark" ] && args+=(--remark "$remark")
+    port=$(tui_input "修改节点" "新端口（空=不改）" "") || return 0
+    [ -n "$port" ] && args+=(--port "$port")
+    case "$proto" in
+        reality|hy2|tuic|anytls|trojan)
+            sni=$(tui_input "修改节点" "新 SNI（空=不改）" "") || return 0
+            [ -n "$sni" ] && args+=(--sni "$sni") ;;
+    esac
+    case "$proto" in
+        hy2|tuic|anytls|trojan|ss2022)
+            password=$(tui_input "修改节点" "新密码（空=不改）" "") || return 0
+            [ -n "$password" ] && args+=(--password "$password") ;;
+    esac
+    case "$proto" in
+        reality)
+            uuid=$(tui_input "修改节点" "新 UUID（空=不改）" "") || return 0
+            [ -n "$uuid" ] && args+=(--uuid "$uuid")
+            tui_yesno "重新生成 Reality 密钥对？" && args+=(--regen-key) ;;
+        hy2)
+            ports=$(tui_input "修改节点" "跳跃区间 起始:结束（空=不改，-=清除）" "") || return 0
+            if [ "$ports" = "-" ]; then args+=(--ports "")
+            elif [ -n "$ports" ]; then args+=(--ports "$ports"); fi ;;
+    esac
+    if [ "${#args[@]}" -le 2 ]; then
+        tui_msg "修改节点" "未修改任何字段"
+        return 0
+    fi
+    node_modify "${args[@]}"
     tui_pause
 }
 
@@ -98,6 +150,7 @@ tui_manage_nodes() {
     c=$(tui_menu "节点管理" "选择操作" \
         list "列出所有节点" \
         link "查看节点链接/二维码" \
+        modify "修改节点" \
         del "删除节点") || return 0
     case "$c" in
         list) list_inbounds; tui_pause ;;
@@ -110,6 +163,7 @@ tui_manage_nodes() {
                 link_main "$id" --qr
             fi
             tui_pause ;;
+        modify) tui_modify_node ;;
         del)
             local id2
             id2=$(tui_input "删除节点" "节点 ID" "") || return 0
@@ -137,7 +191,7 @@ tui_relay() {
     local c
     c=$(tui_menu "中转链" "选择操作" \
         list "列出中转出站" \
-        add "添加中转（粘贴 vless/trojan/ss 链接）" \
+        add "添加中转（粘贴节点链接）" \
         route "为中转绑定 geosite 分流规则" \
         del "删除中转") || return 0
     case "$c" in
@@ -205,11 +259,17 @@ tui_crypto() {
 }
 
 tui_system() {
-    local cc bbr_hint
-    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
-    bbr_hint="当前拥塞控制：$cc"
-    [ "$cc" = "bbr" ] || bbr_hint="$bbr_hint（建议开启 BBR：见 envcheck 输出）"
-    tui_msg "系统信息" "$bbr_hint
+    local c
+    c=$(tui_menu "系统" "选择操作" \
+        info "查看系统信息（BBR/防火墙提示）" \
+        uninstall "卸载 SingBox-YUY") || return 0
+    case "$c" in
+        info)
+            local cc bbr_hint
+            cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+            bbr_hint="当前拥塞控制：$cc"
+            [ "$cc" = "bbr" ] || bbr_hint="$bbr_hint（建议开启 BBR：见 envcheck 输出）"
+            tui_msg "系统信息" "$bbr_hint
 
 防火墙提示：
 - 确保节点监听端口（TCP/UDP）已在安全组/防火墙放行
@@ -217,7 +277,13 @@ tui_system() {
 - ACME 签证书需要放行 TCP 80
 
 订阅服务端口：$(json_get "$SETTINGS_JSON" '.sub_port // 2096')（TCP）"
-    tui_pause
+            tui_pause ;;
+        uninstall)
+            if tui_yesno "确认卸载 SingBox-YUY？配置将备份到 /tmp"; then
+                uninstall_main --yes
+            fi
+            tui_pause ;;
+    esac
 }
 
 tui_main() {
@@ -228,7 +294,7 @@ tui_main() {
             envcheck "① 环境自检" \
             install "② 安装/更新 sing-box" \
             add "③ 添加节点" \
-            manage "④ 节点管理（列表/链接/删除）" \
+            manage "④ 节点管理（列表/链接/修改/删除）" \
             warp "⑤ WARP 与解锁路由" \
             relay "⑥ 中转链" \
             sub "⑦ 订阅与导出" \

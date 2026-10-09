@@ -79,14 +79,16 @@ done
 if python3 - "$TESTDIR/client.clash.yaml" <<'EOF'
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
-assert isinstance(d.get("proxies"), list) and len(d["proxies"]) == 5, "proxies!=5"
+assert isinstance(d.get("proxies"), list) and len(d["proxies"]) == 6, "proxies!=6"
 assert any(g["name"] == "PROXY" for g in d["proxy-groups"]), "缺 PROXY 组"
 assert "MATCH,PROXY" in d["rules"], "缺 MATCH 规则"
 types = sorted(p["type"] for p in d["proxies"])
-assert types == ["anytls", "hysteria2", "ss", "tuic", "vless"], types
+assert types == ["anytls", "hysteria2", "ss", "trojan", "tuic", "vless"], types
+hy2 = [p for p in d["proxies"] if p["type"] == "hysteria2"][0]
+assert hy2.get("ports") == "20000-20001", "hy2 跳跃 ports 缺失"
 EOF
 then
-    ok "clash YAML 结构校验通过（5 proxies / PROXY+AUTO / MATCH）"
+    ok "clash YAML 结构校验通过（6 proxies / PROXY+AUTO / MATCH）"
 else
     fail "clash YAML 校验失败"
 fi
@@ -657,6 +659,159 @@ cp "$PROJ/dist/sb" "$T10/sb.rebuild-check"
 bash "$PROJ/dist/build.sh" >/dev/null 2>&1
 cmp -s "$PROJ/dist/sb" "$T10/sb.rebuild-check" \
     && ok "重复构建输出一致（确定性）" || fail "重复构建输出不一致"
+
+echo "=== [11/11] 新功能：trojan / node-modify / uninstall / hy2 端口跳跃 ==="
+T11="$TESTDIR/t11"; rm -rf "$T11"; mkdir -p "$T11"
+t11() { SB_HOME="$T11/home" SB_ETC="$T11/etc" SB_SYSCTL_D="$T11/sysctl" bash "$PROJ/dist/sb" "$@"; }
+t11nodes() { python3 -c "import json,sys;print(len(json.load(open(sys.argv[1]))))" "$T11/etc/nodes.json" 2>/dev/null || echo 0; }
+t11check() { "$SB_BIN" check -c "$T11/etc/config.json" >/dev/null 2>&1; }
+t11id() { python3 -c "import json,sys;ns=json.load(open(sys.argv[1]));print([n['id'] for n in ns if n['proto']==sys.argv[2]][0])" "$T11/etc/nodes.json" "$1"; }
+t11get() { python3 -c "import json,sys;ns=json.load(open(sys.argv[1]));n=[x for x in ns if x['id']==sys.argv[2]][0];print(n.get(sys.argv[3],''))" "$T11/etc/nodes.json" "$1" "$2"; }
+
+# ---- 11.1 Trojan：add / link / 三格式导出 / 中转 ----
+t11 add --proto trojan --port 16643 --sni www.sony.com --remark t11-trojan --yes >/dev/null 2>&1 \
+    && ok "add trojan 成功" || fail "add trojan 失败"
+ID_TJ=$(t11id trojan)
+URI_TJ=$(t11 link "$ID_TJ" 2>/dev/null)
+case "$URI_TJ" in trojan://*sni=www.sony.com*allowInsecure=1*) ok "trojan URI 格式正确";; *) fail "trojan URI 错误：$URI_TJ";; esac
+t11check && ok "含 trojan 的配置通过 check" || fail "trojan check 失败"
+t11 export --format singbox --out "$T11/trojan-client.json" >/dev/null 2>&1 \
+    && "$SB_BIN" check -c "$T11/trojan-client.json" >/dev/null 2>&1 \
+    && ok "export singbox（含 trojan）通过 check" || fail "export singbox trojan 失败"
+t11 export --format clash --out "$T11/trojan-clash.yaml" >/dev/null 2>&1 \
+    && grep -q "type: trojan" "$T11/trojan-clash.yaml" \
+    && ok "export clash 含 trojan" || fail "export clash trojan 失败"
+t11 relay-add --link "$URI_TJ" >/dev/null 2>&1 \
+    && t11check && ok "relay-add --link trojan 链接成功" || fail "relay-add trojan 失败"
+t11 relay-del --tag relay-1 >/dev/null 2>&1 || true
+
+# ---- 11.2 Hy2 端口跳跃 ----
+t11 add --proto hy2 --port 16644 --sni test.example.com --remark t11-hy2hop --ports 21000:21002 --yes >/dev/null 2>&1 \
+    && ok "add hy2 --ports 成功" || fail "add hy2 --ports 失败"
+ID_HOP=$(t11id hy2)
+t11check && ok "含跳跃 inbound 的配置通过 check" || fail "跳跃配置 check 失败"
+HOPS=$(python3 -c "import json;c=json.load(open('$T11/etc/config.json'));print(len([i for i in c['inbounds'] if 'hop-21' in i['tag']]))")
+[ "$HOPS" = "3" ] && ok "渲染出 3 个跳跃 inbound" || fail "跳跃 inbound 数量不对：$HOPS"
+t11 export --format singbox --out "$T11/hop-client.json" >/dev/null 2>&1
+python3 - "$T11/hop-client.json" <<'PYEOF' 2>/dev/null \
+    && ok "客户端导出含 server_ports" || fail "客户端 server_ports 缺失"
+import json,sys
+c=json.load(open(sys.argv[1]))
+hy2=[o for o in c["outbounds"] if o["type"]=="hysteria2"][0]
+assert hy2.get("server_ports")=="21000:21002", hy2.get("server_ports")
+PYEOF
+case "$(t11 link "$ID_HOP" 2>/dev/null)" in *ports=21000*) ok "hy2 URI 带 ports 参数";; *) fail "hy2 URI 缺 ports";; esac
+# 跳跃区间非法输入
+t11 add --proto hy2 --port 16645 --ports "abc" --yes >/dev/null 2>&1 && fail "非法区间应报错" || ok "非法区间格式报错"
+t11 add --proto hy2 --port 16645 --ports "20000:30000" --yes >/dev/null 2>&1 && fail "超大区间应报错" || ok "超 32 端口区间报错"
+t11 add --proto hy2 --port 16645 --ports "16644:16646" --yes >/dev/null 2>&1 && fail "含主端口区间应报错" || ok "区间含主端口报错"
+# node-modify 开关跳跃
+t11 node-modify --id "$ID_HOP" --ports 21010:21011 >/dev/null 2>&1 \
+    && [ "$(t11get "$ID_HOP" ports)" = "21010:21011" ] && t11check \
+    && ok "node-modify 修改跳跃区间" || fail "node-modify --ports 失败"
+t11 node-modify --id "$ID_HOP" --ports "" >/dev/null 2>&1 \
+    && [ -z "$(t11get "$ID_HOP" ports)" ] && t11check \
+    && ok "node-modify 清除跳跃区间" || fail "node-modify 清除 ports 失败"
+
+# ---- 11.3 node-modify 全协议 ----
+t11 add --proto reality --port 16646 --sni www.sony.com --remark t11-rl --yes >/dev/null 2>&1
+t11 add --proto tuic --port 16647 --sni test.example.com --remark t11-tuic --yes >/dev/null 2>&1
+t11 add --proto anytls --port 16648 --remark t11-at --yes >/dev/null 2>&1
+t11 add --proto ss2022 --port 16649 --remark t11-ss --yes >/dev/null 2>&1
+ID_RL=$(t11id reality); ID_TUIC=$(t11id tuic); ID_AT=$(t11id anytls); ID_SS=$(t11id ss2022)
+t11 node-modify --id "$ID_RL" --remark "改名-rl" >/dev/null 2>&1 \
+    && [ "$(t11get "$ID_RL" remark)" = "改名-rl" ] && ok "modify reality 备注" || fail "modify reality 备注失败"
+PUB1=$(t11get "$ID_RL" reality_public_key)
+t11 node-modify --id "$ID_RL" --regen-key >/dev/null 2>&1 \
+    && [ "$(t11get "$ID_RL" reality_public_key)" != "$PUB1" ] && ok "modify reality regen-key" || fail "regen-key 失败"
+t11 node-modify --id "$ID_TUIC" --sni www.apple.com >/dev/null 2>&1 \
+    && [ "$(t11get "$ID_TUIC" sni)" = "www.apple.com" ] && ok "modify tuic sni" || fail "modify tuic sni 失败"
+t11 node-modify --id "$ID_AT" --port 16650 >/dev/null 2>&1 \
+    && [ "$(t11get "$ID_AT" port)" = "16650" ] && [ "$(t11get "$ID_AT" tag)" = "anytls-16650" ] \
+    && ok "modify anytls 端口（tag 同步）" || fail "modify 端口/tag 失败"
+t11 node-modify --id "$ID_SS" --password "$(head -c 16 /dev/urandom | base64 | tr -d '\n')" >/dev/null 2>&1 \
+    && [ -n "$(t11get "$ID_SS" password)" ] && ok "modify ss2022 密码" || fail "modify 密码失败"
+t11 node-modify --id "$ID_SS" --password "not-valid-password" >/dev/null 2>&1 \
+    && fail "非法 ss 密码应报错" || ok "非法 ss2022 密码被拒绝"
+t11 node-modify --id "$ID_TJ" --password "tjpwn1234567890" >/dev/null 2>&1 \
+    && [ "$(t11get "$ID_TJ" password)" = "tjpwn1234567890" ] && ok "modify trojan 密码" || fail "modify trojan 失败"
+t11check && ok "全部修改后 check 通过" || fail "修改后 check 失败"
+case "$(t11 link "$ID_RL" 2>/dev/null)" in *"#%E6%94%B9%E5%90%8D-rl"*) ok "link 输出随修改变化";; *) fail "link 未更新";; esac
+# 非法组合：报错且不破坏配置
+n0=$(t11nodes); cp "$T11/etc/config.json" "$T11/cfg.bak"
+t11 node-modify --id no-such-id --remark x >/dev/null 2>&1 && fail "不存在 id 应报错" || ok "不存在 id 报错"
+t11 node-modify --id "$ID_SS" --sni www.sony.com >/dev/null 2>&1 && fail "ss 改 sni 应报错" || ok "ss 改 sni 被拒绝"
+t11 node-modify --id "$ID_TJ" --uuid 123 >/dev/null 2>&1 && fail "trojan 改 uuid 应报错" || ok "trojan 改 uuid 被拒绝"
+t11 node-modify --id "$ID_SS" --regen-key >/dev/null 2>&1 && fail "ss regen-key 应报错" || ok "ss regen-key 被拒绝"
+t11 node-modify --id "$ID_RL" --port 16650 >/dev/null 2>&1 && fail "冲突端口应报错" || ok "冲突端口被拒绝"
+t11 node-modify --id "$ID_RL" >/dev/null 2>&1 && fail "无修改项应报错" || ok "无修改项报错"
+[ "$(t11nodes)" = "$n0" ] && ok "非法修改后节点数不变" || fail "节点数被破坏"
+cmp -s "$T11/etc/config.json" "$T11/cfg.bak" && ok "非法修改后配置不变" || fail "配置被破坏"
+t11check && ok "非法修改后 check 仍通过" || fail "check 失败"
+
+# ---- 11.4 uninstall（伪造路径，需 root） ----
+if [ "$(id -u)" -eq 0 ]; then
+    U11="$T11/un"; mkdir -p "$U11/etc" "$U11/unit" "$U11/initd" "$U11/backup"
+    printf '[]' > "$U11/etc/nodes.json"
+    printf '{"host":"x"}' > "$U11/etc/settings.json"
+    touch "$U11/unit/sing-box.service" "$U11/unit/singbox-yuy-sub.service" "$U11/initd/singbox"
+    printf '30 3 * * 1 root /usr/local/bin/singbox-auto-update\nOTHER=1\n' > "$U11/crontab"
+    printf '#!/bin/sh\n' > "$U11/autoupdate"; chmod +x "$U11/autoupdate"
+    printf 'fake' > "$U11/fakebin"; chmod +x "$U11/fakebin"
+    SB_ETC="$U11/etc" SB_BIN="$U11/fakebin" SB_HOME="$U11/home" \
+    SB_UNIT_DIR="$U11/unit" SB_INITD_DIR="$U11/initd" SB_CRON_FILE="$U11/crontab" \
+    SB_AUTOUPDATE_SCRIPT="$U11/autoupdate" SB_PERIODIC_DIR="$U11/periodic" \
+    SB_BACKUP_DIR="$U11/backup" bash "$PROJ/dist/sb" uninstall --yes >/dev/null 2>&1 \
+        && ok "uninstall --yes 成功" || fail "uninstall 失败"
+    [ ! -e "$U11/unit/sing-box.service" ] && [ ! -e "$U11/initd/singbox" ] \
+        && ok "unit/init 文件已删除" || fail "unit/init 残留"
+    ! grep -q "singbox-auto-update" "$U11/crontab" && grep -q "OTHER=1" "$U11/crontab" \
+        && ok "cron 行已清理（其他行保留）" || fail "cron 清理失败"
+    [ ! -e "$U11/autoupdate" ] && ok "autoupdate 脚本已删除" || fail "autoupdate 残留"
+    BK=$(ls "$U11/backup"/singbox-yuy-backup-*.tar.gz 2>/dev/null | head -1)
+    [ -n "$BK" ] && tar -tzf "$BK" 2>/dev/null | grep -q "nodes.json" \
+        && ok "备份包存在且含 nodes.json" || fail "备份包缺失或不完整"
+    [ ! -e "$U11/etc" ] && ok "SB_ETC 已删除" || fail "SB_ETC 残留"
+    [ -x "$U11/fakebin" ] && ok "默认保留 sing-box 二进制" || fail "二进制被误删"
+    # --purge-binary
+    mkdir -p "$U11/etc2"
+    SB_ETC="$U11/etc2" SB_BIN="$U11/fakebin" SB_HOME="$U11/home" \
+    SB_UNIT_DIR="$U11/unit" SB_INITD_DIR="$U11/initd" SB_CRON_FILE="$U11/crontab" \
+    SB_AUTOUPDATE_SCRIPT="$U11/autoupdate" SB_PERIODIC_DIR="$U11/periodic" \
+    SB_BACKUP_DIR="$U11/backup" bash "$PROJ/dist/sb" uninstall --yes --purge-binary >/dev/null 2>&1
+    [ ! -e "$U11/fakebin" ] && ok "--purge-binary 删除二进制" || fail "--purge-binary 未删除"
+else
+    printf '[SKIP] 非 root，跳过 uninstall 测试\n'
+fi
+
+# ---- 11.5 TUI 新路径（trojan 添加） ----
+if script -qec "true" /dev/null >/dev/null 2>&1; then
+    (
+        mkdir -p "$T11/bin"
+        for d in /usr/local/bin /usr/bin /bin; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*; do
+                b=${f##*/}
+                [ "$b" = whiptail ] && continue
+                ln -sf "$f" "$T11/bin/$b" 2>/dev/null || true
+            done
+        done
+        export PATH="$T11/bin:/usr/sbin:/sbin"
+        # 序列：3加节点→5trojan→端口→备注→SNI→回车→0退出
+        printf '3\n5\n16660\ntui-trojan\nwww.sony.com\n\n0\n' > "$T11/tui.in"
+        SB_HOME="$T11/home" SB_ETC="$T11/etc" SB_SYSCTL_D="$T11/sysctl" \
+            script -qec "bash \"$PROJ/dist/sb\"" /dev/null < "$T11/tui.in" > "$T11/tui.out" 2>&1 || true
+    ) || true
+    grep -q "unbound variable" "$T11/tui.out" 2>/dev/null \
+        && fail "TUI trojan 出现 unbound variable" || ok "TUI trojan 无 unbound variable"
+    python3 -c "
+import json
+ns=json.load(open('$T11/etc/nodes.json'))
+assert any(n.get('proto')=='trojan' and n.get('remark')=='tui-trojan' for n in ns)
+" 2>/dev/null && ok "TUI 添加 trojan 节点成功" || fail "TUI 添加 trojan 失败"
+else
+    printf '[SKIP] 无 util-linux script，跳过 TUI 新路径测试\n'
+fi
 
 echo "----------------------------------------"
 printf '结果：%d 通过，%d 失败\n' "$PASS" "$FAIL"

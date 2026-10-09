@@ -17,7 +17,7 @@
 │ sb-mgr（入口：CLI 解析 / 无参数进 TUI）                    │
 ├──────────┬──────────┬──────────┬──────────┬──────────────┤
 │ envcheck │ install  │ inbound  │ warp     │ route        │
-│ 自检     │ 安装更新 │ 5协议管理 │ WARP注册 │ 解锁/中转规则 │
+│ 自检     │ 安装更新 │ 6协议管理 │ WARP注册 │ 解锁/中转规则 │
 ├──────────┴──────────┴──────────┴──────────┴──────────────┤
 │ builder.py（渲染核心：nodes.json + settings.json → config.json）│
 ├──────────┬──────────┬──────────┬─────────────────────────┤
@@ -101,9 +101,11 @@ sudo ./sb-mgr
 |---|---|
 | `sb-mgr install [--proto P] [--port N] [--domain D] [--sni S] [--yes]` | 安装/更新 sing-box 最新版，自动装依赖，注册服务（systemd/OpenRC）+ 每周自动更新；带 `--proto` 装完直接建节点 |
 | `sb-mgr update` | 手动检查并更新 sing-box 到最新版 |
+| `sb-mgr uninstall [--yes] [--purge-binary]` | 一键卸载：停服务、删 unit/cron、备份配置到 /tmp、删配置目录；`--purge-binary` 才删 sing-box 二进制（sb 本体永远保留） |
 | `sb-mgr envcheck` | 环境自检：OS/架构/TUN/内核/BBR/依赖 |
-| `sb-mgr add --proto reality\|hy2\|tuic\|anytls\|ss2022 [参数]` | 添加节点（`--port/--sni/--domain/--password/--remark/--yes`，hy2 支持 `--acme` 走 Let's Encrypt） |
+| `sb-mgr add --proto reality\|hy2\|tuic\|anytls\|trojan\|ss2022 [参数]` | 添加节点（`--port/--sni/--domain/--password/--remark/--yes`，hy2 支持 `--acme` 走 Let's Encrypt、`--ports 起始:结束` 开端口跳跃） |
 | `sb-mgr list` / `sb-mgr del <id>` | 列出 / 删除节点 |
+| `sb-mgr node-modify --id <id> [字段]` | 修改节点：`--remark/--port/--sni/--password/--uuid/--regen-key/--ports`（按协议校验合法字段，改端口自动同步 tag） |
 | `sb-mgr link <id> [--qr]` | 打印标准 URI；`--qr` 终端渲染二维码（需 qrencode） |
 | `sb-mgr warp` | 注册 Cloudflare WARP 并写入 wireguard 出站 |
 | `sb-mgr route-unlock` / `sb-mgr route-lock` | 开/关 流媒体+AI 解锁分流（走 warp，需先 `warp`） |
@@ -122,19 +124,24 @@ sudo ./sb-mgr
 
 ## TUI 菜单
 
-无参数运行 `sb-mgr` 即进菜单：①环境自检 ②安装/更新 ③添加节点（二级协议菜单）
-④节点管理（列表/链接/删除）⑤WARP 与解锁路由 ⑥中转链 ⑦订阅与导出
-⑧加密导入导出 ⑨系统（BBR/防火墙提示）⓪退出。无 whiptail 时自动降级为数字菜单。
+无参数运行 `sb-mgr` 即进菜单：①环境自检 ②安装/更新 ③添加节点（二级协议菜单，含 Trojan、hy2 端口跳跃）
+④节点管理（列表/链接/修改/删除）⑤WARP 与解锁路由 ⑥中转链 ⑦订阅与导出
+⑧加密导入导出 ⑨系统（BBR/防火墙提示/卸载 SingBox-YUY）⓪退出。无 whiptail 时自动降级为数字菜单。
 
 ## 协议与客户端兼容
 
 | 协议 | 端口默认 | 认证 | NekoBox | sing-box 官方客户端 | Mihomo |
 |---|---|---|---|---|---|
 | VLESS + REALITY + Vision | 443 | UUID + reality 密钥对 | ✅ URI 导入 | ✅ JSON/outbound | ✅ vless + reality-opts |
-| Hysteria2 | 8443 | 密码 + TLS（自签/ACME） | ✅ | ✅ | ✅（skip-cert-verify） |
+| Hysteria2 | 8443 | 密码 + TLS（自签/ACME），可选端口跳跃 `--ports 起始:结束`（单区间≤32 端口） | ✅ | ✅（server_ports） | ✅（skip-cert-verify） |
 | TUIC v5 | 443 | UUID + 密码 + TLS | ✅ | ✅ | ✅ |
 | AnyTLS | 8443 | 密码（name=user）+ TLS | ✅（链接已做最短化，防移动端截断） | ✅ | ✅（新版本） |
+| Trojan | 443 | 密码 + TLS（自签） | ✅ URI 导入 | ✅ JSON/outbound | ✅ |
 | Shadowsocks 2022 | 8388 | `2022-blake3-aes-128-gcm` | ✅ | ✅ | ✅ |
+
+> Reality SNI 内置推荐：`www.sony.com / www.microsoft.com / www.apple.com / www.amazon.com / dl.google.com / www.cloudflare.com / www.samsung.com`，支持自定义。
+>
+> Hysteria2 端口跳跃实现说明：实测 sing-box 1.14.3 的 hysteria2 **inbound 不支持**跳跃字段，服务端采用"多 inbound 监听"等效实现（每跳跃端口一个 inbound，tag 后缀 `-hop-<port>`）；客户端 outbound 原生支持 `server_ports: "起始:结束"`，导出自动携带。
 
 > Reality SNI 内置推荐：`www.sony.com / www.microsoft.com / www.apple.com / www.amazon.com / dl.google.com / www.cloudflare.com / www.samsung.com`，支持自定义。
 
@@ -201,7 +208,7 @@ sudo ./sb-mgr relay-add --from-node <id> --host <落地机地址>
 bash tests/run.sh
 ```
 
-覆盖：shellcheck 零警告 → bash -n → py_compile → `builder.py --test` 生成 5 协议示例 →
+覆盖：shellcheck 零警告 → bash -n → py_compile → `builder.py --test` 生成 6 协议示例 →
 **真实 sing-box 二进制 `check`** 逐个校验服务端/客户端配置 → Mihomo YAML 结构解析 →
 AES 加密回环 diff → 订阅服务冒烟（3 路由 200 + 错误 token 404）→
 `sb-mgr add/link/export/relay/del` 端到端 → builder 端口冲突负向测试。

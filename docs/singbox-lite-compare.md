@@ -1,7 +1,8 @@
 # singbox-lite 竞品功能对比
 
 > 对比对象：https://github.com/0xdabiaoge/singbox-lite（README 标注版本：singbox.sh v28）
-> 我方版本：SingBox-YUY v0.3.4（2026-10-09）
+> 我方版本：SingBox-YUY v0.4.0（2026-10-09）
+> **v0.4.0 更新：本表"差距清单"中的 4 项已实现——①节点修改（`node-modify`）②Trojan 协议 ③一键卸载（`uninstall`）④Hysteria2 端口跳跃（`--ports`）。**
 > 结论一句话：对方是**单文件大而全的运维脚本**（双核心、多协议、中转转发一条龙），我们是**模块化+智能分流**（WARP 解锁、订阅服务、CLI/TUI 双模式、CI 测试）。协议广度与运维纵深我们差一截，智能出站与工程化我们领先。
 
 ## 一、协议支持

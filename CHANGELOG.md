@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v0.4.0（2026-10-09）
+
+### 新增
+- **节点修改**：`sb-mgr node-modify --id <id> [--remark/--port/--sni/--password/--uuid/--regen-key/--ports]`，按协议校验合法字段（非法组合直接拒绝）；改端口自动同步 tag；reality 换 SNI 时自签证书原地重签；hy2 可用 `--ports` 开关跳跃。TUI 节点管理菜单新增"修改节点"。
+- **Trojan 协议**：`sb-mgr add --proto trojan`（TLS 自签证书），link 输出标准 `trojan://`，export 三格式（uri/singbox/clash）与订阅服务全支持，relay-add 可解析 trojan 链接做中转。TUI 添加节点菜单新增第 6 项。
+- **一键卸载**：`sb-mgr uninstall [--yes] [--purge-binary]`——停服务、删 unit/init、清 cron 定时任务、备份配置到 `/tmp/singbox-yuy-backup-<日期>.tar.gz`、删配置目录；sing-box 二进制默认保留，`sb` 本体永远不动。TUI 系统菜单新增"卸载 SingBox-YUY"（二次确认）。
+- **Hysteria2 端口跳跃**：`add-hy2 --ports 起始:结束`（单区间≤32 端口）。实测 sing-box 1.14.3 的 hysteria2 inbound 不支持跳跃字段，服务端用"多 inbound 监听"等效实现；客户端 outbound 原生支持 `server_ports`，singbox JSON / clash YAML / URI 导出自动携带。
+
 ## v0.3.4（2026-10-09）
 
 ### 修复

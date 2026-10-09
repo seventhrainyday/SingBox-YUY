@@ -34,14 +34,17 @@ uri_reality() { # $1=node-json $2=host
 
 uri_hy2() {
     local n="$1" host="$2"
-    local pw port sni remark insecure
+    local pw port sni remark insecure ports
     pw=$(jq -r .password <<<"$n"); port=$(jq -r .port <<<"$n")
     sni=$(jq -r .sni <<<"$n"); remark=$(jq -r '.remark//.tag' <<<"$n")
+    ports=$(jq -r '.ports // ""' <<<"$n")
     insecure=1
     [ "$(jq -r .cert_type <<<"$n")" = "acme" ] && insecure=0
-    printf 'hysteria2://%s@%s:%s?sni=%s&insecure=%s#%s' \
-        "$(uri_encode "$pw")" "$host" "$port" "$(uri_encode "$sni")" \
-        "$insecure" "$(uri_encode "$remark")"
+    local query
+    query="sni=$(uri_encode "$sni")&insecure=$insecure"
+    [ -n "$ports" ] && query="$query&ports=$(uri_encode "$ports")"
+    printf 'hysteria2://%s@%s:%s?%s#%s' \
+        "$(uri_encode "$pw")" "$host" "$port" "$query" "$(uri_encode "$remark")"
 }
 
 uri_tuic() {
@@ -74,6 +77,18 @@ uri_ss2022() {
     printf 'ss://%s@%s:%s#%s' "$userinfo" "$host" "$port" "$(uri_encode "$remark")"
 }
 
+uri_trojan() {
+    local n="$1" host="$2"
+    local pw port sni remark insecure
+    pw=$(jq -r .password <<<"$n"); port=$(jq -r .port <<<"$n")
+    sni=$(jq -r .sni <<<"$n"); remark=$(jq -r '.remark//.tag' <<<"$n")
+    insecure=1
+    [ "$(jq -r .cert_type <<<"$n")" = "acme" ] && insecure=0
+    printf 'trojan://%s@%s:%s?sni=%s&allowInsecure=%s#%s' \
+        "$(uri_encode "$pw")" "$host" "$port" "$(uri_encode "$sni")" \
+        "$insecure" "$(uri_encode "$remark")"
+}
+
 node_uri() { # $1=node-json $2=host
     local n="$1" host="$2" proto
     proto=$(jq -r .proto <<<"$n")
@@ -82,6 +97,7 @@ node_uri() { # $1=node-json $2=host
         hy2)     uri_hy2 "$n" "$host" ;;
         tuic)    uri_tuic "$n" "$host" ;;
         anytls)  uri_anytls "$n" "$host" ;;
+        trojan)  uri_trojan "$n" "$host" ;;
         ss2022)  uri_ss2022 "$n" "$host" ;;
         *) die "未知协议：$proto" ;;
     esac
