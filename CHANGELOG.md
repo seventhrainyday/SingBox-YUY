@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## v0.3.4（2026-10-09）
+
+### 修复
+- `relay-add --link` 现在支持解析自家生成的全部 6 种链接（vless/trojan/ss/hysteria2/tuic/anytls）：之前 `parse_link` 只认 vless/trojan/ss，hy2/tuic/anytls 做中转直接报错。
+- 修复中转 ss 出站类型名错误：`parse_link` 返回 `"type": "ss"`，sing-box 合法类型是 `"shadowsocks"`，多条中转并存时 `sing-box check` 报 `unknown outbound type: ss` 并回滚。
+- 测试套件根除 SIGPIPE 竞态：`cmd | grep -q` 在 `set -o pipefail` 下 grep 提前退出会导致生产者收 SIGPIPE 偶发失败，改为"输出收进变量 + `[[ == *pattern* ]]`"断言；修复 tests/run.sh:198 调用未定义 `log_warn` 导致的中断。
+- README：中转链接支持列表更新为 6 种协议。
+
+### 测试
+- 新增 [10/10] 全功能矩阵：CLI 冒烟、5 协议 add、TUI 全流程（伪造 TTY 复现"选完备注卡死"场景）、5 协议 URI 正则、`--qr` 降级、export 三格式、`sub regen` token 轮换、加密边界、中转 5 协议全链路、route-unlock/lock、9 种非法输入鲁棒性。**154 通过，0 失败**。
+- `docs/singbox-lite-compare.md`：与 0xdabiaoge/singbox-lite 的功能对比。
+
 ## v0.3.3（2026-10-09）
 
 ### 修复

@@ -10,6 +10,8 @@
 # 7. 多系统逻辑自测（detect_pm + 包名映射）
 # 8. 二进制冒烟测试 + gcompat 兜底
 # 9. 单文件 bundle：重复构建确定性 / payload 释放与幂等 / bundle 端到端 / self-update
+# 10. 全功能矩阵：CLI 冒烟 / add 全协议 / TUI(TTY) / link-export / 订阅 HTTP / 加密边界 /
+#    中转全链路 / 路由开关 / 鲁棒性 / 构建一致性
 # 任一失败即非零退出。
 set -euo pipefail
 
@@ -148,7 +150,7 @@ EOF
 cp "$FIX/nodes.json" "$TESTDIR/nodes.orig.json"
 SB_ETC="$FIX" "$PROJ/sb-mgr" node-export --out "$TESTDIR/nodes.enc" --password "testpw123" \
     && ok "node-export 加密成功" || fail "node-export 失败"
-head -1 "$TESTDIR/nodes.enc" | grep -q "SB-AES256GCM-V" \
+[[ "$(head -1 "$TESTDIR/nodes.enc")" == *"SB-AES256GCM-V"* ]] \
     && ok "加密文件头自描述" || fail "加密文件头缺失"
 IMP="$TESTDIR/imported"; mkdir -p "$IMP"
 printf '[]' > "$IMP/nodes.json"
@@ -193,7 +195,7 @@ EOF
         ok "aesgcm 与 cryptography 交叉验证通过（20 轮随机）"
     else fail "aesgcm 交叉验证失败"; fi
 else
-    log_warn "跳过 aesgcm 交叉验证（/tmp/cvlib 无 cryptography）"
+    printf '[SKIP] 跳过 aesgcm 交叉验证（无 cryptography 库）\n'
 fi
 
 echo "=== [5/7] subsrv 冒烟测试 ==="
@@ -394,9 +396,11 @@ if SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" add --proto ss202
     ok "bundle add ss2022 成功"
     _bid=$(SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" list 2>/dev/null | grep -o '[a-f0-9]\{8\}' | head -1)
     [ -n "$_bid" ] && ok "bundle list 找到节点" || fail "bundle list 未找到节点"
-    SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" link "$_bid" 2>/dev/null | grep -q '^ss://' \
+    _bout=$(SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" link "$_bid" 2>/dev/null)
+    [[ "$_bout" == "ss://"* ]] \
         && ok "bundle link 生成 ss:// 链接" || fail "bundle link 失败"
-    SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" export --format clash 2>/dev/null | grep -q 'proxies:' \
+    _bout=$(SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" export --format clash 2>/dev/null)
+    [[ "$_bout" == *"proxies:"* ]] \
         && ok "bundle export clash 成功" || fail "bundle export clash 失败"
     SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" del "$_bid" >/dev/null 2>&1 \
         && ok "bundle del 成功" || fail "bundle del 失败"
@@ -439,6 +443,220 @@ if bash "$PROJ/sb-mgr" self-update >/dev/null 2>&1; then
 else
     ok "repo 模式 self-update 被拒绝"
 fi
+
+echo "=== [10/10] 全功能矩阵 ==="
+T10="$TESTDIR/t10"; rm -rf "$T10"; mkdir -p "$T10"
+t10() { SB_HOME="$T10/home" SB_ETC="$T10/etc" bash "$PROJ/dist/sb" "$@"; }
+tnodes() { python3 -c "import json,sys;print(len(json.load(open(sys.argv[1]))))" "$T10/etc/nodes.json" 2>/dev/null || echo 0; }
+tcheck() { "$SB_BIN" check -c "$T10/etc/config.json" >/dev/null 2>&1; }
+tid_of() { python3 -c "import json,sys;ns=json.load(open(sys.argv[1]));print([n['id'] for n in ns if n['proto']==sys.argv[2]][0])" "$T10/etc/nodes.json" "$1"; }
+
+# ---- 10.1 CLI 冒烟（输出收进变量再断言，避免 grep -q 提前关管道导致 SIGPIPE） ----
+t10out=$(t10 version 2>/dev/null); [[ "$t10out" == *"SingBox-YUY v"* ]] && ok "version 输出版本号" || fail "version 输出"
+t10out=$(t10 help 2>/dev/null); [[ "$t10out" == *"用法"* ]] && ok "help 输出用法" || fail "help 输出"
+t10 badoption >/dev/null 2>&1 && fail "未知命令应报错退出" || ok "未知命令报错退出"
+t10 add --proto bogus >/dev/null 2>&1 && fail "未知协议应报错退出" || ok "未知协议报错退出"
+t10out=$(t10 envcheck 2>/dev/null)
+[[ "$t10out" == *"架构"* ]] && ok "envcheck 输出架构行" || fail "envcheck 架构行"
+[[ "${t10out,,}" == *"tun"* ]] && ok "envcheck 输出 TUN 行" || fail "envcheck TUN 行"
+t10 set-host 203.0.113.7 >/dev/null 2>&1 && ok "set-host 成功" || fail "set-host"
+t10 check >/dev/null 2>&1 && ok "空节点库 check 通过" || fail "空库 check"
+t10out=$(t10 list 2>/dev/null); [[ "$t10out" == *"暂无节点"* ]] && ok "空库 list 提示" || fail "空库 list 提示"
+
+# ---- 10.2 add 全协议非交互 ----
+t10 add --proto reality --port 5543 --sni www.apple.com --remark t10-reality --yes >/dev/null 2>&1 \
+    && ok "add reality（指定 sni/端口/备注）" || fail "add reality"
+t10 add --proto hy2 --port 5544 --sni www.example.com --remark t10-hy2 --yes >/dev/null 2>&1 \
+    && ok "add hy2" || fail "add hy2"
+t10 add --proto tuic --port 5545 --remark t10-tuic --yes >/dev/null 2>&1 \
+    && ok "add tuic" || fail "add tuic"
+t10 add --proto anytls --port 5546 --remark t10-anytls --yes >/dev/null 2>&1 \
+    && ok "add anytls" || fail "add anytls"
+t10 add --proto ss2022 --port 5547 --remark t10-ss --yes >/dev/null 2>&1 \
+    && ok "add ss2022" || fail "add ss2022"
+[ "$(tnodes)" = "5" ] && ok "nodes.json 共 5 条目" || fail "nodes.json 条目数异常：$(tnodes)"
+if python3 - "$T10/etc/nodes.json" <<'PYEOF'
+import json,sys
+nodes=json.load(open(sys.argv[1]))
+req={"reality":["uuid","reality_private_key","reality_public_key","short_id","sni","port"],
+     "hy2":["password","port","sni"],"tuic":["uuid","password","port"],
+     "anytls":["password","port"],"ss2022":["password","port","method"]}
+bad=[(n["proto"],f) for n in nodes for f in req[n["proto"]] if not n.get(f)]
+sys.exit(1 if bad else 0)
+PYEOF
+then ok "5 协议节点字段完整"; else fail "节点字段缺失"; fi
+tcheck && ok "5 协议 config.json 过 check" || fail "config check 失败"
+rid=$(tid_of reality)
+t10out=$(t10 link "$rid" 2>/dev/null); [[ "$t10out" == *"203.0.113.7"* ]] \
+    && ok "set-host 在链接中生效" || fail "set-host 未生效"
+
+# ---- 10.3 TUI 全流程（script 伪造 TTY + 隐藏 whiptail 走降级菜单） ----
+if script -qec "true" /dev/null >/dev/null 2>&1; then
+    (
+        mkdir -p "$T10/bin"
+        for d in /usr/local/bin /usr/bin /bin; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*; do
+                b=${f##*/}
+                [ "$b" = whiptail ] && continue
+                ln -sf "$f" "$T10/bin/$b" 2>/dev/null || true
+            done
+        done
+        export PATH="$T10/bin:/usr/sbin:/sbin"
+        # 序列：3加节点→1reality→端口→备注→SNI选1→回车→4管理→1列出→回车→0返回→0退出
+        printf '3\n1\n52052\ntui-reality\n1\n\n4\n1\n\n0\n' > "$T10/tui.in"
+        SB_HOME="$T10/home" SB_ETC="$T10/etc" \
+            script -qec "bash \"$PROJ/dist/sb\"" /dev/null < "$T10/tui.in" > "$T10/tui.out" 2>&1 || true
+    ) || true
+    grep -q "unbound variable" "$T10/tui.out" 2>/dev/null \
+        && fail "TUI 出现 unbound variable" || ok "TUI 全程无 unbound variable"
+    grep -q "SingBox-YUY v" "$T10/tui.out" 2>/dev/null \
+        && ok "TUI 菜单正常渲染" || fail "TUI 菜单渲染失败"
+    python3 -c "
+import json
+ns=json.load(open('$T10/etc/nodes.json'))
+assert any(n.get('port')==52052 and n.get('remark')=='tui-reality' for n in ns)
+" 2>/dev/null && ok "TUI 添加 reality 节点成功（SNI 交互分支）" || fail "TUI 添加 reality 节点失败"
+else
+    printf '[SKIP] 无 util-linux script，跳过 TUI TTY 测试\n'
+fi
+
+# ---- 10.4 link/export 全格式 ----
+for p in reality hy2 tuic anytls ss2022; do
+    pid=$(tid_of "$p")
+    case "$p" in
+        reality) pat='vless://';; hy2) pat='hysteria2://';; tuic) pat='tuic://';;
+        anytls) pat='anytls://';; ss2022) pat='ss://';;
+    esac
+    t10out=$(t10 link "$pid" 2>/dev/null); [[ "$t10out" == "$pat"* ]] \
+        && ok "link $p URI 格式" || fail "link $p URI 格式"
+done
+if command -v qrencode >/dev/null 2>&1; then
+    printf '[SKIP] 本机有 qrencode，跳过降级测试\n'
+else
+    t10out=$(t10 link "$rid" --qr 2>&1); [[ "${t10out,,}" == *"qrencode"* ]] \
+        && ok "无 qrencode 时 --qr 优雅降级" || fail "--qr 降级提示缺失"
+fi
+t10out=$(t10 export --format uri --id "$rid" 2>/dev/null); [[ "$t10out" == "vless://"* ]] \
+    && ok "export --format uri --id 单节点" || fail "export uri --id"
+t10 export --format singbox --out "$T10/client.json" >/dev/null 2>&1 && [ -f "$T10/client.json" ] \
+    && ok "export singbox --out 写文件" || fail "export singbox 写文件"
+"$SB_BIN" check -c "$T10/client.json" >/dev/null 2>&1 \
+    && ok "导出的客户端配置过 check" || fail "客户端配置 check 失败"
+t10 export --format clash --out "$T10/clash.yaml" >/dev/null 2>&1 \
+    && python3 -c "import yaml;d=yaml.safe_load(open('$T10/clash.yaml'));assert d['proxies']" 2>/dev/null \
+    && ok "export clash --out 写文件且 YAML 合法" || fail "export clash"
+
+# ---- 10.5 订阅服务 ----
+tok1=$(python3 -c "import json;print(json.load(open('$T10/etc/settings.json')).get('sub_token',''))" 2>/dev/null)
+t10 sub regen >/dev/null 2>&1
+tok2=$(python3 -c "import json;print(json.load(open('$T10/etc/settings.json')).get('sub_token',''))")
+[ -n "$tok2" ] && [ "$tok1" != "$tok2" ] && ok "sub regen 更换 token" || fail "sub regen 未更换 token"
+t10out=$(t10 sub 2>/dev/null)
+[[ "$t10out" == *"/sub/$tok2"$'\n'* ]] && ok "sub 输出基础订阅 URL" || fail "sub 基础 URL"
+[[ "$t10out" == *"/sub/$tok2/singbox"* ]] && ok "sub 输出 singbox URL" || fail "sub singbox URL"
+[[ "$t10out" == *"/sub/$tok2/clash"* ]] && ok "sub 输出 clash URL" || fail "sub clash URL"
+SB_ETC="$T10/etc" SB_HOME="$T10/home" SB_PORT=18080 SB_MGR="$PROJ/dist/sb" \
+    python3 "$T10/home/py/subsrv.py" --port 18080 >/dev/null 2>&1 &
+SRV=$!
+sleep 1
+code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/sub/$tok2" 2>/dev/null)
+[ "$code" = "200" ] && ok "订阅 base64 路由 200" || fail "订阅 base64 路由 ($code)"
+code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/sub/$tok2/singbox" 2>/dev/null)
+[ "$code" = "200" ] && ok "订阅 singbox 路由 200" || fail "订阅 singbox 路由 ($code)"
+code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/sub/$tok2/clash" 2>/dev/null)
+[ "$code" = "200" ] && ok "订阅 clash 路由 200" || fail "订阅 clash 路由 ($code)"
+code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/sub/${tok1:-none}" 2>/dev/null)
+[ "$code" = "404" ] && ok "旧 token 返回 404" || fail "旧 token 未 404 ($code)"
+kill $SRV 2>/dev/null || true
+wait $SRV 2>/dev/null || true
+
+# ---- 10.6 加密传输边界 ----
+t10 node-export --out "$T10/e1.enc" --password "" >/dev/null 2>&1 \
+    && fail "空密码应被拒绝" || ok "空密码被拒绝"
+t10 node-export --out "$T10/e.enc" --password testpw123 >/dev/null 2>&1 \
+    && ok "node-export 正常" || fail "node-export"
+head -c 40 "$T10/e.enc" > "$T10/e.trunc"
+t10 node-import --in "$T10/e.trunc" --password testpw123 >/dev/null 2>&1 \
+    && fail "截断文件应被拒绝" || ok "截断/损坏文件被拒绝"
+n0=$(tnodes)
+t10 node-import --in "$T10/e.enc" --password testpw123 >/dev/null 2>&1 \
+    && ok "node-import 正常" || fail "node-import"
+[ "$(tnodes)" = "$n0" ] && ok "重复导入自动去重（$n0 条不变）" || fail "去重失败：$n0 -> $(tnodes)"
+
+# ---- 10.7 中转链全链路 ----
+for p in reality hy2 tuic anytls ss2022; do
+    pid=$(tid_of "$p")
+    uri=$(t10 link "$pid" 2>/dev/null)
+    if t10 relay-add --link "$uri" >/tmp/t10-relayerr.txt 2>&1; then
+        ok "relay-add --link $p"
+    else
+        fail "relay-add --link $p（$(tail -1 /tmp/t10-relayerr.txt)）"
+    fi
+done
+t10 relay-add --from-node "$rid" --host 198.51.100.9 >/dev/null 2>&1 \
+    && ok "relay-add --from-node" || fail "relay-add --from-node"
+t10 relay-route --tag relay-1 --geosite netflix,youtube,openai >/dev/null 2>&1 \
+    && ok "relay-route 绑定多 geosite" || fail "relay-route"
+t10out=$(t10 relay-list 2>/dev/null); [[ "$t10out" == *"relay-1"* ]] \
+    && ok "relay-list 输出" || fail "relay-list"
+tcheck && ok "含 6 条中转的配置过 check" || fail "中转配置 check 失败"
+t10 relay-add --link "not-a-uri" >/dev/null 2>&1 \
+    && fail "非法 URI 应报错" || ok "非法 URI 报错"
+t10 relay-add --link "https://example.com/" >/dev/null 2>&1 \
+    && fail "非节点 URI 应报错" || ok "非节点 URI 报错"
+t10 relay-del --tag relay-1 >/dev/null 2>&1 && ok "relay-del" || fail "relay-del"
+tcheck && ok "删除中转后配置仍过 check" || fail "relay-del 后 check 失败"
+
+# ---- 10.8 路由开关（伪造 warp，不调真实 Cloudflare API） ----
+python3 - "$T10/etc/settings.json" <<'PYEOF'
+import json,sys,base64,os
+p=sys.argv[1]; s=json.load(open(p))
+s["warp"]={"local_address":["172.16.0.2/32","2606:4700:110:8a56::2/128"],
+           "private_key":base64.b64encode(os.urandom(32)).decode(),
+           "reserved":[1,2,3]}
+json.dump(s,open(p,"w"),indent=2)
+PYEOF
+t10 route-unlock >/dev/null 2>&1 && ok "route-unlock（有 warp）" || fail "route-unlock"
+python3 -c "
+import json
+c=json.load(open('$T10/etc/config.json'))
+eps=c.get('endpoints',[])
+assert any(e.get('tag')=='warp' for e in eps), 'no warp endpoint'
+rules=c.get('route',{}).get('rules',[])
+assert any(r.get('outbound')=='warp' for r in rules), 'no warp rule'
+" 2>/dev/null && ok "config 含 warp endpoint 且规则引用正确" || fail "warp endpoint/规则缺失"
+tcheck && ok "unlock 后 check 通过" || fail "unlock 后 check 失败"
+t10 route-lock >/dev/null 2>&1 && ok "route-lock" || fail "route-lock"
+python3 - "$T10/etc/settings.json" <<'PYEOF'
+import json,sys
+p=sys.argv[1]; s=json.load(open(p)); s.pop("warp",None); s["unlock"]=False
+json.dump(s,open(p,"w"),indent=2)
+PYEOF
+cp "$T10/etc/config.json" "$T10/config.bak"
+t10 route-unlock >/dev/null 2>&1 && fail "无 warp 时 unlock 应报错" || ok "无 warp 时 unlock 报错退出"
+cmp -s "$T10/etc/config.json" "$T10/config.bak" \
+    && ok "报错后配置未被破坏" || fail "报错后配置被破坏"
+
+# ---- 10.9 鲁棒性（非法输入不破坏已有配置） ----
+n0=$(tnodes)
+t10 del no-such-id >/dev/null 2>&1 && fail "del 不存在应报错" || ok "del 不存在 id 报错"
+t10 link no-such-id >/dev/null 2>&1 && fail "link 不存在应报错" || ok "link 不存在 id 报错"
+t10 add --proto reality --port 0 --yes >/dev/null 2>&1 && fail "端口 0 应报错" || ok "端口 0 报错"
+t10 add --proto reality --port 99999 --yes >/dev/null 2>&1 && fail "端口 99999 应报错" || ok "端口 99999 报错"
+t10 add --proto reality --port abc --yes >/dev/null 2>&1 && fail "端口 abc 应报错" || ok "端口 abc 报错"
+t10 add --proto reality --port 5543 --yes >/dev/null 2>&1 && fail "占用端口应报错" || ok "占用端口报错"
+t10 export --format bogus >/dev/null 2>&1 && fail "非法 format 应报错" || ok "非法 format 报错"
+t10 relay-route --tag no-such-tag --geosite netflix >/dev/null 2>&1 \
+    && fail "relay-route 不存在 tag 应报错" || ok "relay-route 不存在 tag 报错"
+[ "$(tnodes)" = "$n0" ] && ok "非法输入后节点数不变（$n0）" || fail "节点数被破坏：$n0 -> $(tnodes)"
+tcheck && ok "非法输入后 check 仍通过" || fail "非法输入后 check 失败"
+
+# ---- 10.10 bundle 一致性 ----
+cp "$PROJ/dist/sb" "$T10/sb.rebuild-check"
+bash "$PROJ/dist/build.sh" >/dev/null 2>&1
+cmp -s "$PROJ/dist/sb" "$T10/sb.rebuild-check" \
+    && ok "重复构建输出一致（确定性）" || fail "重复构建输出不一致"
 
 echo "----------------------------------------"
 printf '结果：%d 通过，%d 失败\n' "$PASS" "$FAIL"

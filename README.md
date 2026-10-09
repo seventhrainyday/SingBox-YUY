@@ -107,7 +107,7 @@ sudo ./sb-mgr
 | `sb-mgr link <id> [--qr]` | 打印标准 URI；`--qr` 终端渲染二维码（需 qrencode） |
 | `sb-mgr warp` | 注册 Cloudflare WARP 并写入 wireguard 出站 |
 | `sb-mgr route-unlock` / `sb-mgr route-lock` | 开/关 流媒体+AI 解锁分流（走 warp，需先 `warp`） |
-| `sb-mgr relay-add --link "vless://..."` | 解析标准链接为中转出站（支持 vless/trojan/ss，含 reality 参数） |
+| `sb-mgr relay-add --link "vless://..."` | 解析标准链接为中转出站（支持 vless/trojan/ss/hysteria2/tuic/anytls，含 reality 参数） |
 | `sb-mgr relay-add --from-node <id> [--host H]` | 从节点库选节点做中转出站 |
 | `sb-mgr relay-route --tag relay-1 --geosite netflix,youtube` | 为中转绑定 geosite 分流规则 |
 | `sb-mgr relay-del --tag relay-1` / `sb-mgr relay-list` | 删除 / 列出中转 |

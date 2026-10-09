@@ -502,10 +502,46 @@ def parse_link(link):
                 raise ValueError("无法解析 ss 链接")
             method, password = decoded.split(":", 1)
             host, port = u.hostname, u.port
-        return {"type": "ss", "server": host,
+        return {"type": "shadowsocks", "server": host,
                 "server_port": int(port or 8388),
                 "method": method, "password": password}
-    raise ValueError("不支持的链接协议：%s（仅支持 vless/trojan/ss）" % scheme)
+    if scheme == "hysteria2":
+        insecure = q.get("insecure", "0") in ("1", "true")
+        return {
+            "type": "hysteria2",
+            "server": u.hostname, "server_port": u.port or 443,
+            "password": unquote(u.username or ""),
+            "tls": {"enabled": True,
+                    "server_name": q.get("sni", u.hostname),
+                    "insecure": insecure},
+        }
+    if scheme == "tuic":
+        insecure = q.get("allow_insecure", "0") in ("1", "true")
+        alpn = [a for a in q.get("alpn", "h3").split(",") if a]
+        return {
+            "type": "tuic",
+            "server": u.hostname, "server_port": u.port or 443,
+            "uuid": unquote(u.username or ""),
+            "password": unquote(u.password or ""),
+            "congestion_control": q.get("congestion_control", "bbr"),
+            "udp_relay_mode": q.get("udp_relay_mode", "native"),
+            "zero_rtt_handshake": False,
+            "tls": {"enabled": True,
+                    "server_name": q.get("sni", u.hostname),
+                    "insecure": insecure,
+                    "alpn": alpn or ["h3"]},
+        }
+    if scheme == "anytls":
+        insecure = q.get("insecure", "0") in ("1", "true")
+        return {
+            "type": "anytls",
+            "server": u.hostname, "server_port": u.port or 443,
+            "password": unquote(u.username or ""),
+            "tls": {"enabled": True,
+                    "server_name": q.get("sni", u.hostname),
+                    "insecure": insecure},
+        }
+    raise ValueError("不支持的链接协议：%s（仅支持 vless/trojan/ss/hysteria2/tuic/anytls）" % scheme)
 
 
 # ---------------- --test 模式 ----------------
