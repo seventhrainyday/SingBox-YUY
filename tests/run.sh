@@ -9,8 +9,8 @@
 set -euo pipefail
 
 PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TESTDIR="/tmp/sbyuy-test"
-SBDIR="/tmp/sbyuy-singbox"
+TESTDIR="/tmp/sb-mgr-test"
+SBDIR="/tmp/sb-mgr-singbox"
 export SB_BIN="$SBDIR/sing-box"
 
 PASS=0; FAIL=0
@@ -22,13 +22,13 @@ if command -v shellcheck >/dev/null 2>&1; then SC_BIN="shellcheck";
 elif [ -x "$PROJ/.tools/shellcheck" ]; then SC_BIN="$PROJ/.tools/shellcheck";
 elif [ -x "$HOME/workspace/.tools/shellcheck" ]; then SC_BIN="$HOME/workspace/.tools/shellcheck"; fi
 
-echo "=== [1/5] lint ==="
+echo "=== [1/7] lint ==="
 if [ -z "$SC_BIN" ]; then fail "未找到 shellcheck"; else
-    if "$SC_BIN" -S warning "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh"; then
+    if "$SC_BIN" -S warning "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh" "$PROJ/install.sh"; then
         ok "shellcheck -S warning 零警告"
     else fail "shellcheck 发现警告"; fi
 fi
-for f in "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh"; do
+for f in "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh" "$PROJ/install.sh"; do
     bash -n "$f" || { fail "bash -n 失败：$f"; }
 done
 ok "bash -n 全部通过"
@@ -36,7 +36,7 @@ python3 -m py_compile "$PROJ/lib/builder.py" "$PROJ/lib/subsrv.py" "$PROJ/lib/ae
     && ok "py_compile 通过" || fail "py_compile 失败"
 python3 "$PROJ/lib/aesgcm.py" && ok "aesgcm 自检通过" || fail "aesgcm 自检失败"
 
-echo "=== [2/5] 准备 sing-box 真实二进制 ==="
+echo "=== [2/7] 准备 sing-box 真实二进制 ==="
 mkdir -p "$SBDIR" "$TESTDIR"
 if [ ! -x "$SB_BIN" ]; then
     TAG=$(curl -fsS -m 30 https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
@@ -50,7 +50,7 @@ fi
 "$SB_BIN" version | head -1
 ok "sing-box 二进制就绪：$SB_BIN"
 
-echo "=== [3/5] builder --test + sing-box check ==="
+echo "=== [3/7] builder --test + sing-box check ==="
 # 自签证书占位（hy2/tuic/anytls 示例引用此路径；check 可能校验文件存在）
 openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=test.example.com" \
     -keyout "$TESTDIR/key.pem" -out "$TESTDIR/cert.pem" -days 30 2>/dev/null
@@ -100,7 +100,7 @@ else
     ok "builder 正确拒绝端口冲突（负向测试）"
 fi
 
-echo "=== [4/5] crypto 回环测试 ==="
+echo "=== [4/7] crypto 回环测试 ==="
 FIX="$TESTDIR/fixture"
 mkdir -p "$FIX"
 export FIXD="$FIX"
@@ -138,7 +138,7 @@ EOF
 cp "$FIX/nodes.json" "$TESTDIR/nodes.orig.json"
 SB_ETC="$FIX" "$PROJ/sb-mgr" node-export --out "$TESTDIR/nodes.enc" --password "testpw123" \
     && ok "node-export 加密成功" || fail "node-export 失败"
-head -1 "$TESTDIR/nodes.enc" | grep -q "SBYUY-AES256GCM-V" \
+head -1 "$TESTDIR/nodes.enc" | grep -q "SB-AES256GCM-V" \
     && ok "加密文件头自描述" || fail "加密文件头缺失"
 IMP="$TESTDIR/imported"; mkdir -p "$IMP"
 printf '[]' > "$IMP/nodes.json"
@@ -186,16 +186,16 @@ else
     log_warn "跳过 aesgcm 交叉验证（/tmp/cvlib 无 cryptography）"
 fi
 
-echo "=== [5/5] subsrv 冒烟测试 ==="
-export SBYUY_MGR="$PROJ/sb-mgr"
+echo "=== [5/7] subsrv 冒烟测试 ==="
+export SB_MGR="$PROJ/sb-mgr"
 if SB_ETC="$FIX" python3 "$PROJ/lib/subsrv.py" --test; then
     ok "subsrv 冒烟测试通过"
 else fail "subsrv 冒烟测试失败"; fi
 
-echo "=== [6/5] sb-mgr 端到端（add/link/export/relay/del）==="
+echo "=== [6/7] sb-mgr 端到端（add/link/export/relay/del）==="
 E2E="$TESTDIR/e2e"; mkdir -p "$E2E"
 export SB_ETC="$E2E"
-export SBYUY_SYSCTL_D="$TESTDIR/sysctl.d"  # UDP 调优写入隔离目录，不污染测试机
+export SB_SYSCTL_D="$TESTDIR/sysctl.d"  # UDP 调优写入隔离目录，不污染测试机
 printf '[]' > "$E2E/nodes.json"
 printf '{"host":"203.0.113.8","relays":[]}' > "$E2E/settings.json"
 M="$PROJ/sb-mgr"
@@ -259,6 +259,58 @@ else
         fail "回滚失败：nodes.json 在 check 失败后被修改"
     fi
 fi
+
+echo "=== [7/7] 多系统逻辑自测（detect_pm + 包名映射）==="
+FIXT="$TESTDIR/osrelease"; mkdir -p "$FIXT"
+printf 'ID=alpine\nVERSION_ID=3.19.0\n' > "$FIXT/alpine"
+printf 'ID=ubuntu\nVERSION_ID=24.04\n' > "$FIXT/ubuntu"
+printf 'ID=fedora\nVERSION_ID=41\n' > "$FIXT/fedora"
+printf 'ID=arch\n' > "$FIXT/arch"
+printf 'ID=opensuse-leap\nVERSION_ID=15.6\n' > "$FIXT/opensuse"
+printf 'ID=rhel\nVERSION_ID=7.9\n' > "$FIXT/rhel7"
+printf 'ID=rocky\nVERSION_ID=9.4\n' > "$FIXT/rocky9"
+printf 'ID=customdistro\nID_LIKE="debian ubuntu"\n' > "$FIXT/like-debian"
+pm_of() { # $1=fixture -> 包管理器（子 shell 中 source，避免污染主环境）
+    OS_RELEASE_FILE="$FIXT/$1" bash -c '. "$0" >/dev/null 2>&1; detect_pm' "$PROJ/lib/common.sh"
+}
+pm_expect() { # $1=fixture $2=期望
+    local got
+    got=$(pm_of "$1")
+    if [ "$got" = "$2" ]; then ok "detect_pm($1)=$got"; else fail "detect_pm($1)=$got，期望 $2"; fi
+}
+pm_expect alpine apk
+pm_expect ubuntu apt-get
+pm_expect fedora dnf
+pm_expect arch pacman
+pm_expect opensuse zypper
+pm_expect rhel7 yum
+pm_expect rocky9 dnf
+pm_expect like-debian apt-get
+# 包名映射：每种 pm 下每个通用名都必须有非空映射
+pm_map_ok() { # $1=pm；0=完整
+    bash -c '
+        . "$0" >/dev/null 2>&1
+        for g in curl jq python3 openssl ca-certificates iproute2 qrencode whiptail procps git; do
+            n=$(pkg_name "$g" "$1") || n=""
+            [ -n "$n" ] || { echo "EMPTY:$g" >&2; exit 1; }
+        done' "$PROJ/lib/common.sh" "$1"
+}
+for _pm in apt-get dnf yum apk pacman zypper; do
+    if pm_map_ok "$_pm" 2>/dev/null; then
+        ok "包名映射完整：$_pm"
+    else
+        fail "包名映射缺失：$_pm"
+    fi
+done
+# 关键差异映射 spot-check
+[ "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name whiptail dnf' "$PROJ/lib/common.sh")" = "newt" ] \
+    && ok "whiptail 在 dnf 下映射为 newt" || fail "whiptail/dnf 映射错误"
+[ "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name whiptail pacman' "$PROJ/lib/common.sh")" = "libnewt" ] \
+    && ok "whiptail 在 pacman 下映射为 libnewt" || fail "whiptail/pacman 映射错误"
+[ "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name iproute2 yum' "$PROJ/lib/common.sh")" = "iproute" ] \
+    && ok "iproute2 在 yum 下映射为 iproute" || fail "iproute2/yum 映射错误"
+[ "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name procps zypper' "$PROJ/lib/common.sh")" = "procps4" ] \
+    && ok "procps 在 zypper 下映射为 procps4" || fail "procps/zypper 映射错误"
 
 echo "----------------------------------------"
 printf '结果：%d 通过，%d 失败\n' "$PASS" "$FAIL"

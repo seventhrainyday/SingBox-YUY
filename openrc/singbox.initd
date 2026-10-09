@@ -1,0 +1,27 @@
+#!/sbin/openrc-run
+# openrc/singbox.initd - sing-box OpenRC 服务（Alpine 等）
+# 安装：install -m 0755 openrc/singbox.initd /etc/init.d/singbox
+#       rc-update add singbox default && rc-service singbox start
+
+description="sing-box proxy (managed by SingBox-YUY)"
+
+command="/usr/local/bin/sing-box"
+command_args="run -c /etc/sing-box/config.json"
+pidfile="/run/singbox.pid"
+command_background=true
+output_log="/var/log/singbox.log"
+error_log="/var/log/singbox.log"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    # 启动前先校验配置，失败则拒绝启动，避免坏配置循环重启
+    if ! "$command" check -c /etc/sing-box/config.json; then
+        eerror "sing-box 配置校验失败，拒绝启动"
+        return 1
+    fi
+    checkpath -f "$output_log" -m 0644 -o root:root
+}

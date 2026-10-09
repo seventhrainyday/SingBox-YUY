@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# openrc/singbox-yuy-sub.initd - SingBox-YUY 订阅 HTTP 服务（OpenRC）
+# 安装：install -m 0755 openrc/singbox-yuy-sub.initd /etc/init.d/singbox-yuy-sub
+#       rc-update add singbox-yuy-sub default && rc-service singbox-yuy-sub start
+
+description="SingBox-YUY subscription HTTP service"
+
+: "${SB_ETC:=/etc/sing-box}"
+: "${SB_MGR_DIR:=/opt/SingBox-YUY}"
+export SB_ETC
+
+command="/usr/bin/python3"
+command_args="$SB_MGR_DIR/lib/subsrv.py"
+pidfile="/run/singbox-yuy-sub.pid"
+command_background=true
+output_log="/var/log/singbox-yuy-sub.log"
+error_log="/var/log/singbox-yuy-sub.log"
+
+depend() {
+    need net singbox
+    after firewall
+}
+
+start_pre() {
+    checkpath -f "$output_log" -m 0644 -o root:root
+}

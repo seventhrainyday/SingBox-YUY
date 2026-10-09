@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=root
 Environment=SB_ETC=/etc/sing-box
-Environment=SBYUY_MGR=/opt/SingBox-YUY/sb-mgr
+Environment=SB_MGR=/opt/SingBox-YUY/sb-mgr
 ExecStart=/usr/bin/python3 /opt/SingBox-YUY/lib/subsrv.py
 Restart=on-failure
 RestartSec=5s

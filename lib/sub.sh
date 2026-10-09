@@ -3,6 +3,8 @@
 #   sb-mgr sub [start|stop|restart|regen]   无参数=显示订阅链接
 #   sb-mgr sub-regen                        重新生成 token（同 sub regen）
 
+SUB_SVC="singbox-yuy-sub"
+
 sub_regen_main() {
     ensure_etc
     local tok
@@ -28,7 +30,7 @@ sub_show_main() {
     echo "  http://${host}:${port}/sub/${tok}/singbox"
     echo "订阅链接（Mihomo YAML）："
     echo "  http://${host}:${port}/sub/${tok}/clash"
-    if have_systemd && systemctl is-active --quiet sbyuy-sub 2>/dev/null; then
+    if svc_is_active "$SUB_SVC" 2>/dev/null; then
         echo "服务状态：运行中"
     else
         echo "服务状态：未运行（sb-mgr sub start 启动）"
@@ -45,22 +47,27 @@ sub_svc_main() { # start|stop|restart
     local tok
     tok=$(json_get "$SETTINGS_JSON" '.sub_token // ""')
     [ -n "$tok" ] || { sub_regen_main >/dev/null; }
-    if ! have_systemd; then
-        log_warn "未检测到 systemd，请前台手动运行："
+    need_root
+    local root
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    if has_systemd; then
+        install -m 0644 "$root/systemd/singbox-yuy-sub.service" \
+            "/etc/systemd/system/${SUB_SVC}.service"
+        svc_daemon_reload
+    elif has_openrc; then
+        install -m 0755 "$root/openrc/singbox-yuy-sub.initd" \
+            "/etc/init.d/${SUB_SVC}"
+    else
+        log_warn "未检测到 systemd/OpenRC，请前台手动运行："
         echo "  SB_ETC=$SB_ETC python3 $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/subsrv.py"
         return 0
     fi
-    need_root
-    local src
-    src="$(cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" && pwd)"
-    install -m 0644 "$src/sbyuy-sub.service" /etc/systemd/system/sbyuy-sub.service
-    systemctl daemon-reload
     case "$act" in
-        start)   systemctl enable --now sbyuy-sub ;;
-        stop)    systemctl stop sbyuy-sub ;;
-        restart) systemctl restart sbyuy-sub ;;
+        start)   svc_enable "$SUB_SVC" && svc_start "$SUB_SVC" ;;
+        stop)    svc_stop "$SUB_SVC" ;;
+        restart) svc_restart "$SUB_SVC" ;;
     esac
-    log_ok "sbyuy-sub 已 $act"
+    log_ok "$SUB_SVC 已 $act"
 }
 
 sub_main() { # [start|stop|restart|regen] 缺省显示链接

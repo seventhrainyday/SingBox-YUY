@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # warp.sh - Cloudflare WARP 账号注册 + wireguard 出站配置
 # 纯 curl + jq + openssl 实现。用法：sb-mgr warp
-# 测试可用 SBYUY_WG_PRIV_HEX=<64位hex> 固定私钥做确定性验证。
+# 测试可用 SB_WG_PRIV_HEX=<64位hex> 固定私钥做确定性验证。
 
 WARP_API="https://api.cloudflareclient.com/v0i1909051800/reg"
 # WARP peer 公钥固定写在 builder.py 的 build_warp_endpoint() 中
@@ -14,12 +14,12 @@ wg_keygen() {
     trap "rm -rf '$tmpd'" RETURN
     priv_pem="$tmpd/priv.pem"
 
-    if [ -n "${SBYUY_WG_PRIV_HEX:-}" ]; then
+    if [ -n "${SB_WG_PRIV_HEX:-}" ]; then
         # 测试模式：固定私钥
         python3 - "$priv_pem" <<'EOF'
 import sys, base64
-raw = bytes.fromhex(__import__("os").environ["SBYUY_WG_PRIV_HEX"])
-assert len(raw) == 32, "SBYUY_WG_PRIV_HEX 必须是 64 位 hex"
+raw = bytes.fromhex(__import__("os").environ["SB_WG_PRIV_HEX"])
+assert len(raw) == 32, "SB_WG_PRIV_HEX 必须是 64 位 hex"
 # 手工组装 PKCS#8 DER（X25519 私钥模板）
 der = (bytes.fromhex("302e020100300506032b656e04220420") + raw)
 open(sys.argv[1], "wb").write(der)

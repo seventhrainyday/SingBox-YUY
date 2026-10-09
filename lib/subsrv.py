@@ -5,8 +5,8 @@
 #   /sub/<token>/singbox  -> sing-box 客户端 JSON
 #   /sub/<token>/clash    -> Mihomo YAML
 # token 不匹配 -> 404。
-# 配置来源：环境变量 SBYUY_TOKEN / SBYUY_PORT，缺省读 $SB_ETC/settings.json。
-# 内容通过调用 sb-mgr export 生成（SBYUY_MGR 指定 sb-mgr 路径，缺省为同级 ../sb-mgr）。
+# 配置来源：环境变量 SB_TOKEN / SB_PORT，缺省读 $SB_ETC/settings.json。
+# 内容通过调用 sb-mgr export 生成（SB_MGR 指定 sb-mgr 路径，缺省为同级 ../sb-mgr）。
 
 import base64
 import hmac
@@ -32,14 +32,14 @@ def load_settings():
 
 
 def get_token():
-    tok = os.environ.get("SBYUY_TOKEN", "").strip()
+    tok = os.environ.get("SB_TOKEN", "").strip()
     if tok:
         return tok
     return (load_settings().get("sub_token") or "").strip()
 
 
 def get_port():
-    p = os.environ.get("SBYUY_PORT", "").strip()
+    p = os.environ.get("SB_PORT", "").strip()
     if p.isdigit():
         return int(p)
     s = load_settings()
@@ -50,7 +50,7 @@ def get_port():
 
 
 def mgr_path():
-    m = os.environ.get("SBYUY_MGR", DEFAULT_MGR)
+    m = os.environ.get("SB_MGR", DEFAULT_MGR)
     return m if os.path.exists(m) else DEFAULT_MGR
 
 
@@ -77,7 +77,7 @@ def export_content(fmt):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SBYUY-Sub/0.1.0"
+    server_version = "SingBox-YUY-Sub/0.2.0"
 
     def log_message(self, *args):
         sys.stderr.write("[subsrv] %s %s\n" % (self.command, self.path))
@@ -131,7 +131,7 @@ def run_smoke():
 
     token = get_token()
     if not token:
-        print("SMOKE FAIL: 未配置 token（settings.json sub_token 或 SBYUY_TOKEN）")
+        print("SMOKE FAIL: 未配置 token（settings.json sub_token 或 SB_TOKEN）")
         return 1
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port = srv.server_address[1]

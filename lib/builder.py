@@ -105,7 +105,7 @@ def build_inbound(node):
     if proto == "anytls":
         return dict(base, **{
             "type": "anytls",
-            "users": [{"name": "yuy", "password": node["password"]}],
+            "users": [{"name": "user", "password": node["password"]}],
             "padding_scheme": [],
             "tls": _tls_block(node),
         })
@@ -557,18 +557,18 @@ def sample_nodes():
          "remark": "测试-reality", "created": ts},
         {"id": "aa02", "proto": "hy2", "tag": "hy2-8443", "port": 8443,
          "password": "testpassword1234", "sni": "test.example.com",
-         "cert_type": "self", "cert_path": "/tmp/sbyuy-test/cert.pem",
-         "key_path": "/tmp/sbyuy-test/key.pem",
+         "cert_type": "self", "cert_path": "/tmp/sb-mgr-test/cert.pem",
+         "key_path": "/tmp/sb-mgr-test/key.pem",
          "remark": "测试-hy2", "created": ts},
         {"id": "aa03", "proto": "tuic", "tag": "tuic-9443", "port": 9443,
          "uuid": u2, "password": "tuicpw12345678", "sni": "test.example.com",
-         "cert_type": "self", "cert_path": "/tmp/sbyuy-test/cert.pem",
-         "key_path": "/tmp/sbyuy-test/key.pem",
+         "cert_type": "self", "cert_path": "/tmp/sb-mgr-test/cert.pem",
+         "key_path": "/tmp/sb-mgr-test/key.pem",
          "remark": "测试-tuic", "created": ts},
         {"id": "aa04", "proto": "anytls", "tag": "anytls-8843", "port": 8843,
          "password": "anytlspw123456", "sni": "www.microsoft.com",
-         "cert_type": "self", "cert_path": "/tmp/sbyuy-test/cert.pem",
-         "key_path": "/tmp/sbyuy-test/key.pem",
+         "cert_type": "self", "cert_path": "/tmp/sb-mgr-test/cert.pem",
+         "key_path": "/tmp/sb-mgr-test/key.pem",
          "remark": "测试-anytls", "created": ts},
         {"id": "aa05", "proto": "ss2022", "tag": "ss-8388", "port": 8388,
          "method": "2022-blake3-aes-128-gcm",
@@ -644,7 +644,7 @@ def run_test(out_dir):
 
 def main(argv):
     if "--test" in argv:
-        out_dir = "/tmp/sbyuy-test"
+        out_dir = "/tmp/sb-mgr-test"
         for i, a in enumerate(argv):
             if a == "--out-dir" and i + 1 < len(argv):
                 out_dir = argv[i + 1]

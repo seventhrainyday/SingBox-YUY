@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## v0.2.0（2026-10-09）
+
+### 一键安装
+- 新增仓库根目录 `install.sh`：`curl -fsSL https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/install.sh | sudo bash` 一行安装；支持 `bash -s -- args...` 参数透传（如 `--proto hy2 --port 8443 --yes`）
+- 逻辑：必须 root（非 root 直接报错提示加 sudo，不自动提权）；优先 `git clone` 到 `/opt/SingBox-YUY`（已存在则 `git pull --ff-only`，非 git 目录先备份再克隆）；无 git 时尝试包管理器安装，实在装不上回退下载 tarball；最后 `exec sb-mgr install "$@"`
+
+### 多系统支持
+- `lib/common.sh` 新增 `detect_pm()`（/etc/os-release 识别，`OS_RELEASE_FILE` 可覆盖测试）与 `pkg_install()`（通用包名→各发行版实际包名映射矩阵：curl/jq/python3/openssl/ca-certificates/iproute2/qrencode/whiptail/procps/git；qrencode/whiptail 可选，失败只警告）
+- 覆盖：Debian 11/12、Ubuntu 22.04/24.04（apt-get）、RHEL/Alma/Rocky 8/9（dnf，7 系 yum）、Fedora（dnf）、Alpine 3.18+（apk）、Arch（pacman）、openSUSE（zypper）
+- 服务抽象 `svc_enable/start/restart/stop/is_active`：systemd 与 OpenRC 自动分支；`apply_config`、`sub.sh`、`tui.sh`/`sb-mgr` 内原直接 `systemctl` 调用全部改走 `svc_*`
+- 新增 `openrc/`：`singbox.initd`（start_pre 先 `sing-box check -c`，失败拒绝启动）、`singbox-yuy-sub.initd`
+- 自动更新三分支：有 crontab 走 cron（每周一 03:30）；OpenRC 无 cron 时装到 `/etc/periodic/weekly/singbox-auto-update`（run-parts 风格）；都没有则打印手动执行提示
+- sing-box 二进制下载新增 armv7 映射（armv7l→armv7）
+- Hysteria2/TUIC 的 sysctl 调优：无 `/etc/sysctl.d` 的系统改写 `/etc/sysctl.conf`（Alpine），`sysctl --system` 失败则已用 `sysctl -w` 即时生效
+- `envcheck` 输出包管理器与 init 系统；CI 测试矩阵新增 `almalinux:9`、`rockylinux:9`；`tests/run.sh` 新增"多系统逻辑自测"（伪造 os-release 断言 detect_pm + 全矩阵包名映射非空）
+
+### 去掉代号（v0.1.0 刚发布尚无真实用户，直接重命名，不做兼容层）
+- 环境变量统一 `SB_` 前缀：`SB_VERSION`（值 `0.2.0`）、`SB_BAK_NODES`/`SB_BAK_SETTINGS`、`SB_SYSCTL_D`、`SB_WG_PRIV_HEX`、`SB_TOKEN`/`SB_PORT`/`SB_MGR`、`SB_PW`/`SB_LIB`
+- 自动更新脚本改名 `singbox-auto-update`，`logger` tag 改为 `singbox-yuy`
+- sysctl 调优文件改名 `99-singbox-yuy.conf`
+- AnyTLS 用户名改为 `"user"`；订阅服务 `server_version` 改为 `SingBox-YUY-Sub/0.2.0`
+- 订阅服务单元改名 `singbox-yuy-sub.service`（systemd 与 openrc 同名）
+- 加密包头与 AAD 改为 `SB-` 前缀（`SB-AES256GCM-V*`）；旧版加密包不再可读，无用户受影响
+- README 标题及全文去掉代号表述；测试临时目录改为 `/tmp/sb-mgr-test`
+
 ## v0.1.0（2026-10-09）
 
 首个可用版本：从零实现的 sing-box 一键安装/运维工具（bash + python），CLI + TUI 双模式。
@@ -9,7 +34,7 @@
 - `lib/common.sh`：日志/颜色/die/架构检测/公网 IP/端口检查；`SB_ETC`/`SB_BIN` 环境变量覆盖，支持无 root 测试
 - `lib/builder.py`：配置渲染核心（nodes.json + settings.json → config.json），含 `client`/`clash`/`parse-link`/`node-outbound` 子命令与 `--test` 示例生成模式；已适配 sing-box 1.12+ 新 DNS 服务器格式、1.13 移除 dns 出站、WARP 改用 wireguard endpoint（路由规则直接引用其 tag）
 - 每次写配置必经 `sing-box check`，失败自动回滚 nodes.json/settings.json
-- `systemd/`：sing-box.service 与 sbyuy-sub.service 单元文件
+- `systemd/`：sing-box.service 与 singbox-yuy-sub.service 单元文件
 
 ### 环境与安装
 - `lib/envcheck.sh`：OS/架构（amd64/arm64）/TUN/内核版本/BBR/依赖自检，缺失项给修复提示
@@ -17,9 +42,9 @@
 
 ### 5 种 inbound 协议（`lib/inbound.sh`）
 - VLESS + REALITY + Vision：7 个推荐 SNI 交互选择/自定义，`sing-box generate` 生成 UUID/keypair/short_id
-- Hysteria2：自签证书一键生成，`--acme` 可选 Let's Encrypt（acme.sh），自动调大 UDP 缓冲区并持久化到 /etc/sysctl.d/99-sbyuy.conf
+- Hysteria2：自签证书一键生成，`--acme` 可选 Let's Encrypt（acme.sh），自动调大 UDP 缓冲区并持久化到 /etc/sysctl.d/99-singbox-yuy.conf
 - TUIC v5：uuid+password 双凭证，bbr 拥塞控制
-- AnyTLS：name 固定 yuy，导出链接最短化防移动端截断
+- AnyTLS：name 固定 user，导出链接最短化防移动端截断
 - Shadowsocks-2022：`2022-blake3-aes-128-gcm`，base64(16 随机字节) 密码
 
 ### 智能出站与路由

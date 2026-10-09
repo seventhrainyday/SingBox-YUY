@@ -5,7 +5,7 @@
 #   SB_BIN  sing-box 二进制路径（默认 /usr/local/bin/sing-box）
 
 # shellcheck disable=SC2034
-SBYUY_VERSION="0.1.0"
+SB_VERSION="0.2.0"
 SB_ETC="${SB_ETC:-/etc/sing-box}"
 SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 NODES_JSON="$SB_ETC/nodes.json"
@@ -27,8 +27,141 @@ need_root() {
     [ "$(id -u)" -eq 0 ] || die "需要 root 权限（当前 uid=$(id -u)）"
 }
 
-have_systemd() {
+has_systemd() {
     [ -d /run/systemd/system ]
+}
+
+has_openrc() {
+    command -v rc-service >/dev/null 2>&1
+}
+
+# ---------- 包管理器（多系统） ----------
+detect_pm() {
+    # 输出 apt-get|dnf|yum|apk|pacman|zypper|unknown
+    # 测试可用 OS_RELEASE_FILE 覆盖 /etc/os-release
+    local f="${OS_RELEASE_FILE:-/etc/os-release}"
+    local id="" id_like="" ver=""
+    if [ -r "$f" ]; then
+        id=$(sed -n 's/^ID=//p' "$f" | tr -d '"' | tr '[:upper:]' '[:lower:]')
+        id_like=$(sed -n 's/^ID_LIKE=//p' "$f" | tr -d '"' | tr '[:upper:]' '[:lower:]')
+        ver=$(sed -n 's/^VERSION_ID=//p' "$f" | tr -d '"')
+    fi
+    case "$id" in
+        ubuntu|debian|raspbian|linuxmint|pop|kali) echo "apt-get"; return 0 ;;
+        alpine) echo "apk"; return 0 ;;
+        fedora|almalinux|rocky|ol|amzn) echo "dnf"; return 0 ;;
+        centos|rhel)
+            case "$ver" in 7*) echo "yum";; *) echo "dnf";; esac
+            return 0 ;;
+        arch|manjaro|endeavouros|cachyos) echo "pacman"; return 0 ;;
+        opensuse-leap|opensuse-tumbleweed|sles|opensuse) echo "zypper"; return 0 ;;
+    esac
+    case "$id_like" in
+        *debian*|*ubuntu*) echo "apt-get" ;;
+        *rhel*|*centos*|*fedora*) echo "dnf" ;;
+        *arch*) echo "pacman" ;;
+        *suse*) echo "zypper" ;;
+        *alpine*) echo "apk" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+pkg_name() {
+    # $1=通用名 $2=包管理器 -> 实际包名（空=该 pm 无此包）
+    local g="$1" pm="$2"
+    case "$g" in
+        curl|jq|python3|openssl|ca-certificates|qrencode) echo "$g"; return 0 ;;
+        iproute2)
+            case "$pm" in apt-get|dnf|apk|pacman|zypper) echo "iproute2";; yum) echo "iproute";; esac
+            return 0 ;;
+        whiptail)
+            case "$pm" in
+                apt-get|apk|yum) echo "whiptail" ;;
+                dnf|zypper) echo "newt" ;;
+                pacman) echo "libnewt" ;;
+            esac
+            return 0 ;;
+        procps)
+            case "$pm" in
+                apt-get) echo "procps" ;;
+                dnf|yum|apk|pacman) echo "procps-ng" ;;
+                zypper) echo "procps4" ;;
+            esac
+            return 0 ;;
+        git) echo "git"; return 0 ;;
+    esac
+    return 1
+}
+
+pkg_install() {
+    # $@=通用包名；qrencode/whiptail 为可选，失败只警告
+    local pm
+    pm=$(detect_pm)
+    [ "$pm" != "unknown" ] || { log_warn "无法识别包管理器，跳过依赖安装"; return 1; }
+    need_root
+    case "$pm" in
+        apt-get) apt-get update -qq ;;
+        dnf|yum) "$pm" makecache -q >/dev/null 2>&1 || true ;;
+        apk) apk update ;;
+        pacman) pacman -Sy --noconfirm >/dev/null 2>&1 || true ;;
+        zypper) zypper --non-interactive refresh >/dev/null 2>&1 || true ;;
+    esac
+    local g name optional
+    for g in "$@"; do
+        name=$(pkg_name "$g" "$pm") || name=""
+        if [ -z "$name" ]; then log_warn "包 $g 在 $pm 下无映射，跳过"; continue; fi
+        case "$g" in qrencode|whiptail) optional=1;; *) optional=0;; esac
+        local ok=0
+        case "$pm" in
+            apt-get) apt-get install -y -qq "$name" >/dev/null 2>&1 && ok=1 ;;
+            dnf|yum) "$pm" install -y -q "$name" >/dev/null 2>&1 && ok=1 ;;
+            apk) apk add --no-cache "$name" >/dev/null 2>&1 && ok=1 ;;
+            pacman) pacman -S --noconfirm --needed "$name" >/dev/null 2>&1 && ok=1 ;;
+            zypper) zypper --non-interactive install "$name" >/dev/null 2>&1 && ok=1 ;;
+        esac
+        if [ "$ok" = "1" ]; then
+            log_ok "依赖已安装：$g ($name)"
+        elif [ "$optional" = "1" ]; then
+            log_warn "可选包 $g 安装失败，已跳过"
+        else
+            die "依赖 $g ($name) 安装失败"
+        fi
+    done
+}
+
+# ---------- 服务抽象（systemd / OpenRC） ----------
+svc_daemon_reload() {
+    has_systemd && systemctl daemon-reload || true
+}
+
+svc_enable() { # $1=服务名
+    if has_systemd; then systemctl enable "$1"
+    elif has_openrc; then rc-update add "$1" default
+    else log_warn "无受支持的 init 系统，跳过 enable $1"; return 1; fi
+}
+
+svc_start() { # $1=服务名
+    if has_systemd; then systemctl start "$1"
+    elif has_openrc; then rc-service "$1" start
+    else log_warn "无受支持的 init 系统，跳过 start $1"; return 1; fi
+}
+
+svc_restart() { # $1=服务名
+    if has_systemd; then systemctl restart "$1"
+    elif has_openrc; then rc-service "$1" restart
+    else log_warn "无受支持的 init 系统，跳过 restart $1"; return 1; fi
+}
+
+svc_stop() { # $1=服务名
+    if has_systemd; then systemctl stop "$1"
+    elif has_openrc; then rc-service "$1" stop
+    else log_warn "无受支持的 init 系统，跳过 stop $1"; return 1; fi
+}
+
+svc_is_active() { # $1=服务名；0=运行中
+    if has_systemd; then systemctl is-active --quiet "$1"
+    elif has_openrc; then rc-service "$1" status >/dev/null 2>&1
+    else return 1; fi
 }
 
 # ---------- 系统检测 ----------
@@ -113,31 +246,31 @@ builder_py() {
 snapshot_config() {
     # 在修改 nodes.json/settings.json 之前调用，快照当前状态。
     # 幂等：一次 sb-mgr 调用链中只保留最早的一份快照。
-    if [ -z "${SBYUY_BAK_NODES:-}" ]; then
-        SBYUY_BAK_NODES=$(mktemp) || die "mktemp 失败"
-        SBYUY_BAK_SETTINGS=$(mktemp) || die "mktemp 失败"
-        cp -f "$NODES_JSON" "$SBYUY_BAK_NODES"
-        cp -f "$SETTINGS_JSON" "$SBYUY_BAK_SETTINGS"
-        export SBYUY_BAK_NODES SBYUY_BAK_SETTINGS
+    if [ -z "${SB_BAK_NODES:-}" ]; then
+        SB_BAK_NODES=$(mktemp) || die "mktemp 失败"
+        SB_BAK_SETTINGS=$(mktemp) || die "mktemp 失败"
+        cp -f "$NODES_JSON" "$SB_BAK_NODES"
+        cp -f "$SETTINGS_JSON" "$SB_BAK_SETTINGS"
+        export SB_BAK_NODES SB_BAK_SETTINGS
     fi
 }
 
 _apply_cleanup() { # $1=own（1=快照由本函数创建，删除临时文件）
     if [ "$1" = "1" ]; then
-        rm -f "${SBYUY_BAK_NODES:-}" "${SBYUY_BAK_SETTINGS:-}"
+        rm -f "${SB_BAK_NODES:-}" "${SB_BAK_SETTINGS:-}"
     fi
-    unset SBYUY_BAK_NODES SBYUY_BAK_SETTINGS
+    unset SB_BAK_NODES SB_BAK_SETTINGS
 }
 
 _apply_rollback() {
-    cp -f "$SBYUY_BAK_NODES" "$NODES_JSON"
-    cp -f "$SBYUY_BAK_SETTINGS" "$SETTINGS_JSON"
+    cp -f "$SB_BAK_NODES" "$NODES_JSON"
+    cp -f "$SB_BAK_SETTINGS" "$SETTINGS_JSON"
 }
 
 apply_config() {
     # 重渲染 config.json -> sing-box check -> 失败回滚到 snapshot_config 时的状态
     local own=0
-    if [ -z "${SBYUY_BAK_NODES:-}" ]; then
+    if [ -z "${SB_BAK_NODES:-}" ]; then
         own=1
         snapshot_config
     fi
@@ -159,9 +292,9 @@ apply_config() {
     fi
     _apply_cleanup "$own"
     log_ok "配置已渲染并通过校验：$CONFIG_JSON"
-    if have_systemd && [ "$(id -u)" -eq 0 ]; then
-        systemctl restart sing-box 2>/dev/null && log_ok "sing-box 已重启" \
-            || log_warn "systemctl restart sing-box 失败，请手动检查"
+    if [ "$(id -u)" -eq 0 ] && { has_systemd || has_openrc; }; then
+        svc_restart sing-box 2>/dev/null && log_ok "sing-box 已重启" \
+            || log_warn "重启 sing-box 服务失败，请手动检查"
     fi
 }
 

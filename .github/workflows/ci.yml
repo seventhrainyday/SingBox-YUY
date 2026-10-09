@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: shellcheck（零警告）
+        run: shellcheck -S warning lib/*.sh sb-mgr tests/run.sh install.sh
+      - name: bash 语法检查
+        run: |
+          for f in lib/*.sh sb-mgr tests/run.sh install.sh openrc/*.initd; do bash -n "$f"; done
+      - name: python 编译检查
+        run: python3 -m py_compile lib/builder.py lib/subsrv.py lib/aesgcm.py
+
+  test:
+    name: test (${{ matrix.name }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-22.04
+            runs-on: ubuntu-22.04
+            install: sudo apt-get update -qq && sudo apt-get install -y -qq curl jq python3 python3-yaml openssl iproute2
+          - name: ubuntu-24.04
+            runs-on: ubuntu-24.04
+            install: sudo apt-get update -qq && sudo apt-get install -y -qq curl jq python3 python3-yaml openssl iproute2
+          - name: debian-11
+            runs-on: ubuntu-24.04
+            container: debian:11
+            install: apt-get update -qq && apt-get install -y -qq curl jq python3 python3-yaml openssl iproute2 ca-certificates bash procps
+          - name: debian-12
+            runs-on: ubuntu-24.04
+            container: debian:12
+            install: apt-get update -qq && apt-get install -y -qq curl jq python3 python3-yaml openssl iproute2 ca-certificates bash procps
+          - name: alpine
+            runs-on: ubuntu-24.04
+            container: alpine:latest
+            install: apk add --no-cache curl jq python3 py3-yaml openssl iproute2 ca-certificates bash
+          - name: almalinux-9
+            runs-on: ubuntu-24.04
+            container: almalinux:9
+            install: dnf install -y -q curl jq python3 python3-pyyaml openssl iproute procps-ng ca-certificates bash
+          - name: rockylinux-9
+            runs-on: ubuntu-24.04
+            container: rockylinux:9
+            install: dnf install -y -q curl jq python3 python3-pyyaml openssl iproute procps-ng ca-certificates bash
+    runs-on: ${{ matrix.runs-on }}
+    container: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: ${{ matrix.install }}
+      - name: 运行测试套件
+        run: bash tests/run.sh

@@ -19,7 +19,7 @@ LIB="$MGR_DIR/lib"
 
 usage() {
     cat <<EOF
-SingBox-YUY v$SBYUY_VERSION - 现代化 sing-box 一键安装/运维工具
+SingBox-YUY v$SB_VERSION - 现代化 sing-box 一键安装/运维工具
 
 用法：
   sb-mgr install [--proto hy2|reality|tuic|anytls|ss] [--port N] [--domain D] [--sni S] [--yes]
@@ -96,7 +96,7 @@ main() {
     case "$cmd" in
         ""|tui)            tui_main ;;
         help|--help|-h)    usage ;;
-        version|--version) echo "SingBox-YUY v$SBYUY_VERSION" ;;
+        version|--version) echo "SingBox-YUY v$SB_VERSION" ;;
         install)  shift; cmd_install "$@" ;;
         update)   update_main ;;
         envcheck) envcheck_main ;;

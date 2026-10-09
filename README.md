@@ -1,4 +1,4 @@
-# SingBox-YUY（代号 YUY）
+# SingBox-YUY
 
 现代化、模块化、原生支持智能出站与多协议链式分流的 **sing-box** 自动化运维工具。
 
@@ -32,6 +32,21 @@
 
 ## 快速开始
 
+一行命令安装（自动 clone 到 `/opt/SingBox-YUY` 并执行 `sb-mgr install`）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/install.sh | sudo bash
+```
+
+带参数一键装（参数透传给 `sb-mgr install`，示例：直接装好 Hysteria2 节点）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/install.sh \
+  | sudo bash -s -- --proto hy2 --port 8443 --yes
+```
+
+备选（手动 git clone）：
+
 ```bash
 git clone https://github.com/seventhrainyday/SingBox-YUY.git /opt/SingBox-YUY
 cd /opt/SingBox-YUY
@@ -52,11 +67,27 @@ sudo ./sb-mgr install --proto hy2 --port 8443 --yes
 sudo ./sb-mgr
 ```
 
+## 系统支持
+
+| 发行版 | 包管理器 | init 系统 | 备注 |
+|---|---|---|---|
+| Debian 11 / 12 | apt-get | systemd | CI 实测 |
+| Ubuntu 22.04 / 24.04 | apt-get | systemd | CI 实测 |
+| RHEL / AlmaLinux / RockyLinux 8 / 9 | dnf（7 系用 yum） | systemd | CI 实测 alma/rocky 9 |
+| Fedora | dnf | systemd | — |
+| Alpine 3.18+ | apk | OpenRC | 无 whiptail 时 TUI 自动降级数字菜单；sysctl 持久化改写 /etc/sysctl.conf |
+| Arch Linux | pacman | systemd | — |
+| openSUSE Leap / Tumbleweed | zypper | systemd | — |
+
+- 依赖安装全自动（`sb-mgr install` 内走包管理器矩阵装 curl/jq/python3/openssl 等）；`qrencode`/`whiptail` 为可选，装不上只警告不中断。
+- 服务注册自动分支：systemd 写 unit 并 enable；OpenRC 安装 `openrc/*.initd` 并 `rc-update add`。
+- 自动更新：有 cron 走 cron（每周一 03:30）；OpenRC 无 cron 时装到 `/etc/periodic/weekly`；都没有则打印手动执行提示。
+
 ## CLI 命令表
 
 | 命令 | 说明 |
 |---|---|
-| `sb-mgr install [--proto P] [--port N] [--domain D] [--sni S] [--yes]` | 安装/更新 sing-box 最新版，注册 systemd + 每周自动更新 cron；带 `--proto` 装完直接建节点 |
+| `sb-mgr install [--proto P] [--port N] [--domain D] [--sni S] [--yes]` | 安装/更新 sing-box 最新版，自动装依赖，注册服务（systemd/OpenRC）+ 每周自动更新；带 `--proto` 装完直接建节点 |
 | `sb-mgr update` | 手动检查并更新 sing-box 到最新版 |
 | `sb-mgr envcheck` | 环境自检：OS/架构/TUN/内核/BBR/依赖 |
 | `sb-mgr add --proto reality\|hy2\|tuic\|anytls\|ss2022 [参数]` | 添加节点（`--port/--sni/--domain/--password/--remark/--yes`，hy2 支持 `--acme` 走 Let's Encrypt） |
@@ -89,7 +120,7 @@ sudo ./sb-mgr
 | VLESS + REALITY + Vision | 443 | UUID + reality 密钥对 | ✅ URI 导入 | ✅ JSON/outbound | ✅ vless + reality-opts |
 | Hysteria2 | 8443 | 密码 + TLS（自签/ACME） | ✅ | ✅ | ✅（skip-cert-verify） |
 | TUIC v5 | 443 | UUID + 密码 + TLS | ✅ | ✅ | ✅ |
-| AnyTLS | 8443 | 密码（name=yuy）+ TLS | ✅（链接已做最短化，防移动端截断） | ✅ | ✅（新版本） |
+| AnyTLS | 8443 | 密码（name=user）+ TLS | ✅（链接已做最短化，防移动端截断） | ✅ | ✅（新版本） |
 | Shadowsocks 2022 | 8388 | `2022-blake3-aes-128-gcm` | ✅ | ✅ | ✅ |
 
 > Reality SNI 内置推荐：`www.sony.com / www.microsoft.com / www.apple.com / www.amazon.com / dl.google.com / www.cloudflare.com / www.samsung.com`，支持自定义。
@@ -120,7 +151,7 @@ sudo ./sb-mgr relay-route --tag relay-1 --geosite netflix,openai
 
 ```bash
 sudo ./sb-mgr sub regen     # 生成 token
-sudo ./sb-mgr sub start     # 启动 systemd 服务 sbyuy-sub
+sudo ./sb-mgr sub start     # 启动订阅服务 singbox-yuy-sub（systemd/OpenRC 自动分支）
 ./sb-mgr sub                # 显示三个订阅链接
 ```
 
@@ -148,7 +179,7 @@ sudo ./sb-mgr relay-add --from-node <id> --host <落地机地址>
 ## 配置安全
 
 - 每次写入 `nodes.json`/`settings.json` 后必经：`builder.py` 渲染 → `sing-box check -c` →
-  失败则**回滚**两个状态文件并报错退出；通过才 `systemctl restart sing-box`。
+  失败则**回滚**两个状态文件并报错退出；通过才重启 sing-box 服务。
 - `builder.py` 另做合法性预检：端口冲突、tag 重复直接拒绝渲染。
 
 ## 测试与 CI
@@ -163,14 +194,14 @@ AES 加密回环 diff → 订阅服务冒烟（3 路由 200 + 错误 token 404�
 `sb-mgr add/link/export/relay/del` 端到端 → builder 端口冲突负向测试。
 
 GitHub Actions（`.github/workflows/ci.yml`）：lint job → test 矩阵
-`ubuntu-22.04 / ubuntu-24.04 / debian:11 / debian:12 / alpine:latest`。
+`ubuntu-22.04 / ubuntu-24.04 / debian:11 / debian:12 / alpine:latest / almalinux:9 / rockylinux:9`。
 
 ## FAQ
 
 - **无 root 能测吗？** 能。`SB_ETC=/tmp/x SB_BIN=/path/to/sing-box bash tests/run.sh`，
   所有 lib 函数都认这两个环境变量覆盖。
-- **订阅服务不用 systemd 怎么跑？** `SB_ETC=/etc/sing-box python3 lib/subsrv.py` 前台运行；
-  token/port 读 `settings.json`（或 `SBYUY_TOKEN`/`SBYUY_PORT` 环境变量）。
+- **订阅服务不用 systemd/OpenRC 怎么跑？** `SB_ETC=/etc/sing-box python3 lib/subsrv.py` 前台运行；
+  token/port 读 `settings.json`（或 `SB_TOKEN`/`SB_PORT` 环境变量）。
 - **Hysteria2 连不上？** 先确认 UDP 端口放行；脚本已自动调大 `net.core.rmem_max/wmem_max`。
 - **ACME 签证书失败？** 域名必须解析到本机且 TCP 80 可从公网访问；也可先用自签跑通再换。
 - **AnyTLS 链接在手机上导入被截断？** 导出链接已是最短形式（仅 `insecure`+`sni` 两个参数）。
@@ -181,7 +212,7 @@ GitHub Actions（`.github/workflows/ci.yml`）：lint job → test 矩阵
 - `sing-box check` 不下载 remote rule-set（srs）；首次启动需联网拉取 geosite 规则集。
 - Mihomo 的 `anytls` 代理类型需较新版本内核才支持。
 - WARP 注册依赖 `api.cloudflareclient.com` 可达；部分网络需先走代理。
-- 本工具面向 Debian/Ubuntu/Alpine（CI 矩阵），其他发行版按脚本提示装依赖即可。
+- 架构支持 amd64 / arm64 / armv7；32 位 armv7 需 sing-box 官方提供对应构建。
 
 ## 许可证
 

@@ -6,22 +6,30 @@ envcheck_main() {
     local fails=0
     log_info "=== SingBox-YUY 环境自检 ==="
 
-    # 1. OS 发行版
-    local os
+    # 1. OS 发行版 / 包管理器 / init 系统
+    local os pm init
     os=$(detect_os)
+    pm=$(detect_pm)
+    init="unknown"
+    has_systemd && init="systemd"
+    has_openrc && init="OpenRC"
     printf '  %-14s %s\n' "OS:" "$os"
+    printf '  %-14s %s\n' "包管理器:" "$pm"
+    printf '  %-14s %s\n' "init 系统:" "$init"
     case "$os" in
-        ubuntu*|debian*|alpine*) log_ok "发行版受支持" ;;
-        *) log_warn "未在 CI 矩阵内（ubuntu/debian/alpine），可能仍可运行";;
+        ubuntu*|debian*|alpine*|fedora*|arch*|*suse*|*rhel*|*centos*|*almalinux*|*rocky*)
+            log_ok "发行版受支持" ;;
+        *) log_warn "未在测试矩阵内，仍可能运行（需手动装依赖）";;
     esac
+    [ "$pm" = "unknown" ] && log_warn "未能识别包管理器，依赖需手动安装"
 
     # 2. 架构
     local arch
     arch=$(detect_arch)
     printf '  %-14s %s\n' "架构:" "$arch"
     case "$arch" in
-        amd64|arm64) log_ok "架构受支持" ;;
-        *) log_err "不支持的架构：$arch（仅 amd64/arm64）"; fails=$((fails+1)) ;;
+        amd64|arm64|armv7) log_ok "架构受支持" ;;
+        *) log_err "不支持的架构：$arch（仅 amd64/arm64/armv7）"; fails=$((fails+1)) ;;
     esac
 
     # 3. 内核版本
@@ -66,7 +74,7 @@ envcheck_main() {
             miss=1
         fi
     done
-    [ "$miss" -eq 0 ] || { log_warn "缺少依赖，请先安装：apt install -y curl jq python3 openssl（alpine: apk add ...）"; }
+    [ "$miss" -eq 0 ] || { log_warn "缺少依赖：root 下运行 sb-mgr install 会自动安装，或按包管理器手动安装"; }
 
     # 7. sing-box 二进制
     if [ -x "$SB_BIN" ]; then

@@ -15,36 +15,36 @@ _have_crypto_py() {
     python3 -c "from cryptography.hazmat.primitives.ciphers.aead import AESGCM" 2>/dev/null
 }
 
-_py_aesgcm_export() { # $1=in $2=out ; 密码经 SBYUY_PW 环境变量传入
-    SBYUY_LIB="$LIBDIR" python3 - "$1" "$2" <<'EOF'
+_py_aesgcm_export() { # $1=in $2=out ; 密码经 SB_PW 环境变量传入
+    SB_LIB="$LIBDIR" python3 - "$1" "$2" <<'EOF'
 import sys, os, json, base64, hashlib, importlib.util
 spec = importlib.util.spec_from_file_location(
-    "aesgcm", os.path.join(os.environ["SBYUY_LIB"], "aesgcm.py"))
+    "aesgcm", os.path.join(os.environ["SB_LIB"], "aesgcm.py"))
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-pw = os.environ["SBYUY_PW"].encode()
+pw = os.environ["SB_PW"].encode()
 data = open(sys.argv[1], "rb").read()
 salt = os.urandom(16)
 nonce = os.urandom(12)
 key = hashlib.pbkdf2_hmac("sha256", pw, salt, 200_000, 32)
-ct, tag = m.gcm_encrypt(key, nonce, data, b"SBYUY-V3")
+ct, tag = m.gcm_encrypt(key, nonce, data, b"SB-V3")
 env = {"v": 3,
        "salt": base64.b64encode(salt).decode(),
        "nonce": base64.b64encode(nonce).decode(),
        "ct": base64.b64encode(ct + tag).decode()}
 blob = base64.b64encode(json.dumps(env).encode()).decode()
-open(sys.argv[2], "w").write("SBYUY-AES256GCM-V3\n" + blob + "\n")
+open(sys.argv[2], "w").write("SB-AES256GCM-V3\n" + blob + "\n")
 EOF
 }
 
-_py_aesgcm_import() { # $1=in $2=out(tmp) ; 密码经 SBYUY_PW 环境变量传入
-    SBYUY_LIB="$LIBDIR" python3 - "$1" "$2" <<'EOF'
+_py_aesgcm_import() { # $1=in $2=out(tmp) ; 密码经 SB_PW 环境变量传入
+    SB_LIB="$LIBDIR" python3 - "$1" "$2" <<'EOF'
 import sys, os, json, base64, hashlib, importlib.util
 spec = importlib.util.spec_from_file_location(
-    "aesgcm", os.path.join(os.environ["SBYUY_LIB"], "aesgcm.py"))
+    "aesgcm", os.path.join(os.environ["SB_LIB"], "aesgcm.py"))
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-pw = os.environ["SBYUY_PW"].encode()
+pw = os.environ["SB_PW"].encode()
 lines = open(sys.argv[1]).read().splitlines()
 env = json.loads(base64.b64decode(lines[1]))
 assert env.get("v") == 3, "不是 V3 加密包"
@@ -52,7 +52,7 @@ key = hashlib.pbkdf2_hmac("sha256", pw,
                           base64.b64decode(env["salt"]), 200_000, 32)
 raw = base64.b64decode(env["ct"])
 ct, tag = raw[:-16], raw[-16:]
-pt = m.gcm_decrypt(key, base64.b64decode(env["nonce"]), ct, tag, b"SBYUY-V3")
+pt = m.gcm_decrypt(key, base64.b64decode(env["nonce"]), ct, tag, b"SB-V3")
 if pt is None:
     sys.exit(7)  # 密码错误或数据被篡改
 open(sys.argv[2], "wb").write(pt)
@@ -71,23 +71,23 @@ crypto_export_main() { # --out FILE --password PW
     [ -s "$NODES_JSON" ] || die "nodes.json 为空，无可导出节点"
 
     if _have_crypto_py; then
-        SBYUY_PW="$password" python3 - "$NODES_JSON" "$out" <<'EOF'
+        SB_PW="$password" python3 - "$NODES_JSON" "$out" <<'EOF'
 import sys, os, json, base64, hashlib
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-pw = os.environ["SBYUY_PW"].encode()
+pw = os.environ["SB_PW"].encode()
 data = open(sys.argv[1], "rb").read()
 salt = os.urandom(16); nonce = os.urandom(12)
 key = hashlib.pbkdf2_hmac("sha256", pw, salt, 200_000, 32)
-ct = AESGCM(key).encrypt(nonce, data, b"SBYUY-V2")
+ct = AESGCM(key).encrypt(nonce, data, b"SB-V2")
 env = {"v": 2, "salt": base64.b64encode(salt).decode(),
        "nonce": base64.b64encode(nonce).decode(),
        "ct": base64.b64encode(ct).decode()}
 blob = base64.b64encode(json.dumps(env).encode()).decode()
-open(sys.argv[2], "w").write("SBYUY-AES256GCM-V2\n" + blob + "\n")
+open(sys.argv[2], "w").write("SB-AES256GCM-V2\n" + blob + "\n")
 EOF
         log_ok "已导出（AES-256-GCM V2，cryptography）：$out"
     else
-        SBYUY_PW="$password" _py_aesgcm_export "$NODES_JSON" "$out" \
+        SB_PW="$password" _py_aesgcm_export "$NODES_JSON" "$out" \
             || die "加密失败"
         log_ok "已导出（AES-256-GCM V3，纯标准库）：$out"
     fi
@@ -113,22 +113,22 @@ crypto_import_main() { # --in FILE --password PW [--yes]
     trap "rm -f '$tmp'" RETURN
 
     case "$header" in
-        SBYUY-AES256GCM-V3)
-            SBYUY_PW="$password" _py_aesgcm_import "$in" "$tmp" \
+        SB-AES256GCM-V3)
+            SB_PW="$password" _py_aesgcm_import "$in" "$tmp" \
                 || die "解密失败（密码错误或文件被篡改）"
             ;;
-        SBYUY-AES256GCM-V2)
+        SB-AES256GCM-V2)
             _have_crypto_py || die "该文件为 V2 格式，需要 python3-cryptography 才能解密（pip install cryptography）"
-            if SBYUY_PW="$password" python3 - "$in" "$tmp" <<'EOF'
+            if SB_PW="$password" python3 - "$in" "$tmp" <<'EOF'
 import sys, os, json, base64, hashlib
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-pw = os.environ["SBYUY_PW"].encode()
+pw = os.environ["SB_PW"].encode()
 lines = open(sys.argv[1]).read().splitlines()
 env = json.loads(base64.b64decode(lines[1]))
 key = hashlib.pbkdf2_hmac("sha256", pw, base64.b64decode(env["salt"]), 200_000, 32)
 try:
     pt = AESGCM(key).decrypt(base64.b64decode(env["nonce"]),
-                             base64.b64decode(env["ct"]), b"SBYUY-V2")
+                             base64.b64decode(env["ct"]), b"SB-V2")
 except Exception:
     sys.exit(7)
 open(sys.argv[2], "wb").write(pt)
@@ -139,7 +139,7 @@ EOF
                 die "解密失败（密码错误或文件被篡改）"
             fi
             ;;
-        SBYUY-AES256GCM-V1)
+        SB-AES256GCM-V1)
             die "V1 加密包已废弃（openssl enc 不支持 GCM，无法解密），请用新版重新导出"
             ;;
         *) die "未知的文件头：$header（不是 SingBox-YUY 加密包）" ;;

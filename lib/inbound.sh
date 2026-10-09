@@ -75,23 +75,33 @@ acme_cert() { # $1=domain -> 输出 "cert_path key_path"
 
 tune_udp_buffer() {
     # Hysteria2/TUIC 建议调大 UDP 缓冲区
-    # 测试可用 SBYUY_SYSCTL_D 覆盖写入目录（默认 /etc/sysctl.d）
+    # 测试可用 SB_SYSCTL_D 覆盖写入目录；无 /etc/sysctl.d 的系统（如 Alpine）改写 /etc/sysctl.conf
     if [ "$(id -u)" -ne 0 ]; then
         log_warn "非 root，跳过 UDP 缓冲区调优（建议 root 下执行）"
         return 0
     fi
-    local sysctl_d="${SBYUY_SYSCTL_D:-/etc/sysctl.d}"
     sysctl -w net.core.rmem_max=26214400 >/dev/null 2>&1 \
         || log_warn "sysctl -w net.core.rmem_max 失败（容器受限可忽略）"
     sysctl -w net.core.wmem_max=26214400 >/dev/null 2>&1 \
         || log_warn "sysctl -w net.core.wmem_max 失败（容器受限可忽略）"
-    mkdir -p "$sysctl_d"
-    if ! grep -q "sbyuy" "$sysctl_d/99-sbyuy.conf" 2>/dev/null; then
-        cat >> "$sysctl_d/99-sbyuy.conf" <<'EOF'
+    local conf
+    if [ -n "${SB_SYSCTL_D:-}" ]; then
+        mkdir -p "$SB_SYSCTL_D"
+        conf="$SB_SYSCTL_D/99-singbox-yuy.conf"
+    elif [ -d /etc/sysctl.d ]; then
+        conf="/etc/sysctl.d/99-singbox-yuy.conf"
+    else
+        conf="/etc/sysctl.conf"
+    fi
+    if ! grep -q "singbox-yuy" "$conf" 2>/dev/null; then
+        cat >> "$conf" <<'EOF'
 # SingBox-YUY: UDP 缓冲区调优（Hysteria2/TUIC）
 net.core.rmem_max=26214400
 net.core.wmem_max=26214400
 EOF
+    fi
+    if ! sysctl --system >/dev/null 2>&1; then
+        log_warn "sysctl --system 未生效，已用 sysctl -w 即时应用（重启后以 $conf 为准）"
     fi
     log_ok "UDP 缓冲区已调大（rmem_max/wmem_max=26214400）"
 }

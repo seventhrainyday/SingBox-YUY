@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh - sing-box 官方二进制下载安装、systemd 注册、cron 自动更新
+# install.sh - sing-box 官方二进制下载安装、服务注册（systemd/OpenRC）、自动更新
 # 用法：install_main [--yes]
 
 SB_REPO="SagerNet/sing-box"
@@ -8,9 +8,17 @@ install_main() {
     local yes=0
     [ "${1:-}" = "--yes" ] && yes=1
 
+    need_root
+    log_info "安装依赖（curl jq python3 openssl ca-certificates iproute2 procps）..."
+    pkg_install curl jq python3 openssl ca-certificates iproute2 procps qrencode whiptail \
+        || log_warn "部分依赖安装失败，继续尝试（缺失项稍后按提示手动安装）"
+
     local arch
     arch=$(detect_arch)
-    [ "$arch" = "amd64" ] || [ "$arch" = "arm64" ] || die "不支持的架构：$arch（仅 amd64/arm64）"
+    case "$arch" in
+        amd64|arm64|armv7) ;;
+        *) die "不支持的架构：$arch（仅 amd64/arm64/armv7）" ;;
+    esac
 
     log_info "正在查询 sing-box 最新版本..."
     local tag
@@ -44,7 +52,6 @@ install_main() {
     bin=$(find "$tmpd" -maxdepth 2 -name sing-box -type f | head -1)
     [ -n "$bin" ] || die "压缩包内未找到 sing-box 二进制"
 
-    need_root
     install -m 0755 "$bin" "$SB_BIN" || die "安装到 $SB_BIN 失败"
     log_ok "已安装：$("$SB_BIN" version 2>/dev/null | head -1)"
 
@@ -54,33 +61,38 @@ install_main() {
         python3 "$(builder_py)" || log_warn "初始配置渲染失败，稍后可用 sb-mgr check 重试"
     fi
 
-    register_systemd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" && pwd)"
-    register_cron
+    register_service "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    register_autoupdate
 
     trap - EXIT
     rm -rf "$tmpd"
     log_ok "sing-box 安装完成"
 }
 
-register_systemd() {
-    # $1: service 文件来源目录
-    local src="$1"
-    [ -n "$src" ] || die "register_systemd 缺少 service 目录参数"
-    if ! have_systemd; then
-        log_warn "未检测到 systemd，跳过服务注册（容器/Docker 内请用前台运行：$SB_BIN run -c $CONFIG_JSON）"
-        return 0
-    fi
+register_service() {
+    # $1: 项目根目录（含 systemd/ 与 openrc/）
+    local root="$1"
+    [ -n "$root" ] || die "register_service 缺少项目根目录参数"
     need_root
-    install -m 0644 "$src/sing-box.service" /etc/systemd/system/sing-box.service
-    systemctl daemon-reload
-    systemctl enable --now sing-box 2>/dev/null || systemctl enable sing-box
-    log_ok "systemd 服务 sing-box 已注册并设为开机自启"
+    if has_systemd; then
+        install -m 0644 "$root/systemd/sing-box.service" /etc/systemd/system/sing-box.service
+        svc_daemon_reload
+        systemctl enable --now sing-box 2>/dev/null || systemctl enable sing-box
+        log_ok "systemd 服务 sing-box 已注册并设为开机自启"
+    elif has_openrc; then
+        install -m 0755 "$root/openrc/singbox.initd" /etc/init.d/singbox
+        rc-update add singbox default
+        rc-service singbox start
+        log_ok "OpenRC 服务 singbox 已注册并启动"
+    else
+        log_warn "未检测到 systemd/OpenRC，跳过服务注册（前台运行：$SB_BIN run -c $CONFIG_JSON）"
+    fi
 }
 
-register_cron() {
-    # 每周一 03:30 检查更新
+register_autoupdate() {
+    # 自动更新：cron 优先；OpenRC 无 cron 时走 /etc/periodic/weekly；都没有则手动提示
     need_root
-    local script=/usr/local/bin/sbyuy-auto-update
+    local script=/usr/local/bin/singbox-auto-update
     cat > "$script" <<'EOF'
 #!/usr/bin/env bash
 # SingBox-YUY 每周自动更新 sing-box（由 install.sh 注册）
@@ -89,21 +101,31 @@ SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 CUR=$(basename "$("$SB_BIN" version 2>/dev/null | head -1)" 2>/dev/null || echo none)
 TAG=$(curl -fsS -m 30 https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
 if [ -n "$TAG" ] && [ "$TAG" != "null" ] && ! "$SB_BIN" version 2>/dev/null | grep -q "$TAG"; then
-    logger -t sbyuy "sing-box $CUR -> $TAG，开始更新"
+    logger -t singbox-yuy "sing-box $CUR -> $TAG，开始更新"
     export SB_MGR_YES=1
-    /opt/SingBox-YUY/sb-mgr install --yes >/var/log/sbyuy-update.log 2>&1 || logger -t sbyuy "自动更新失败，见 /var/log/sbyuy-update.log"
+    /opt/SingBox-YUY/sb-mgr install --yes >/var/log/singbox-yuy-update.log 2>&1 || logger -t singbox-yuy "自动更新失败，见 /var/log/singbox-yuy-update.log"
 else
-    logger -t sbyuy "sing-box 已是最新（$TAG）"
+    logger -t singbox-yuy "sing-box 已是最新（$TAG）"
 fi
 EOF
     chmod 0755 "$script"
-    local cronline="30 3 * * 1 root $script"
-    if [ -f /etc/crontab ]; then
-        grep -q "sbyuy-auto-update" /etc/crontab 2>/dev/null || echo "$cronline" >> /etc/crontab
-        log_ok "已注册每周自动更新任务（/etc/crontab，每周一 03:30）"
+    if command -v crontab >/dev/null 2>&1; then
+        local cronline="30 3 * * 1 root $script"
+        if [ -f /etc/crontab ]; then
+            grep -q "singbox-auto-update" /etc/crontab 2>/dev/null \
+                || echo "$cronline" >> /etc/crontab
+            log_ok "已注册每周自动更新任务（/etc/crontab，每周一 03:30）"
+        else
+            (crontab -l 2>/dev/null | grep -v "singbox-auto-update";
+             echo "$cronline" | sed 's/^[^ ]* [^ ]* \* \* [^ ]* root //') | crontab -
+            log_ok "已注册每周自动更新任务（root crontab）"
+        fi
+    elif [ -d /etc/periodic/weekly ]; then
+        # OpenRC run-parts 风格：脚本本身即任务体，无需 cron 时间头
+        install -m 0755 "$script" /etc/periodic/weekly/singbox-auto-update
+        log_ok "已注册每周自动更新（/etc/periodic/weekly/singbox-auto-update）"
     else
-        (crontab -l 2>/dev/null | grep -v "sbyuy-auto-update"; echo "$cronline" | sed 's/^[^ ]* [^ ]* \* \* [^ ]* root //') | crontab -
-        log_ok "已注册每周自动更新任务（root crontab）"
+        log_warn "未找到 crontab 且无 /etc/periodic/weekly；可手动执行 $script 更新 sing-box"
     fi
 }
 
