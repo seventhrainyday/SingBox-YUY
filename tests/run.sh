@@ -312,6 +312,29 @@ done
 [ "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name procps zypper' "$PROJ/lib/common.sh")" = "procps4" ] \
     && ok "procps 在 zypper 下映射为 procps4" || fail "procps/zypper 映射错误"
 
+echo "=== [8/8] 二进制冒烟测试 + gcompat 兜底 ==="
+MUSLDIR="$TESTDIR/musl"; mkdir -p "$MUSLDIR"
+touch "$MUSLDIR/alpine-release"   # 伪造 Alpine 标记文件
+printf '#!/usr/bin/env bash\nexit 1\n' > "$MUSLDIR/badbin"; chmod +x "$MUSLDIR/badbin"
+printf '#!/usr/bin/env bash\necho "sing-box version 1.14.3"\n' > "$MUSLDIR/goodbin"; chmod +x "$MUSLDIR/goodbin"
+# run_ensure $bin -> 回显 0/1；子 shell 里桩掉 pkg_install，避免测试真装包
+run_ensure() {
+    ALPINE_RELEASE_FILE="$MUSLDIR/alpine-release" bash -c '
+        . "$0" >/dev/null 2>&1
+        . "$1" >/dev/null 2>&1
+        pkg_install() { return 0; }
+        if ensure_binary_runnable "$2" >/dev/null 2>&1; then echo 0; else echo 1; fi' \
+        "$PROJ/lib/common.sh" "$PROJ/lib/install.sh" "$1"
+}
+[ "$(run_ensure "$MUSLDIR/goodbin")" = "0" ] \
+    && ok "可运行二进制直接通过冒烟测试" || fail "goodbin 应返回 0"
+[ "$(run_ensure "$MUSLDIR/badbin")" = "1" ] \
+    && ok "不可运行二进制经 gcompat 兜底仍失败时返回 1" || fail "badbin 应返回 1"
+[ "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name gcompat apk' "$PROJ/lib/common.sh")" = "gcompat" ] \
+    && ok "gcompat 在 apk 下映射为 gcompat" || fail "gcompat/apk 映射错误"
+[ -z "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name gcompat apt-get' "$PROJ/lib/common.sh")" ] \
+    && ok "gcompat 在 apt-get 下无映射（自动跳过）" || fail "gcompat 不应在 apt-get 下有映射"
+
 echo "----------------------------------------"
 printf '结果：%d 通过，%d 失败\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -77,7 +77,7 @@ def export_content(fmt):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SingBox-YUY-Sub/0.2.0"
+    server_version = "SingBox-YUY-Sub/0.2.1"
 
     def log_message(self, *args):
         sys.stderr.write("[subsrv] %s %s\n" % (self.command, self.path))

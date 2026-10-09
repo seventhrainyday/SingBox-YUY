@@ -5,7 +5,7 @@
 #   SB_BIN  sing-box 二进制路径（默认 /usr/local/bin/sing-box）
 
 # shellcheck disable=SC2034
-SB_VERSION="0.2.0"
+SB_VERSION="0.2.1"
 SB_ETC="${SB_ETC:-/etc/sing-box}"
 SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 NODES_JSON="$SB_ETC/nodes.json"
@@ -89,6 +89,10 @@ pkg_name() {
             esac
             return 0 ;;
         git) echo "git"; return 0 ;;
+        gcompat)
+            # musl 兼容层：仅 Alpine 提供，其余包管理器无映射（调用方自行容错）
+            case "$pm" in apk) echo "gcompat";; esac
+            return 0 ;;
     esac
     return 1
 }

@@ -4,6 +4,22 @@
 
 SB_REPO="SagerNet/sing-box"
 
+ensure_binary_runnable() {
+    # $1=二进制路径。冒烟测试 sing-box 能否执行；musl 系统（Alpine 等）上
+    # glibc 链接的官方二进制需 gcompat 兼容层，自动尝试安装一次。
+    # 返回 0=可运行，1=不可运行。ALPINE_RELEASE_FILE 可覆盖 Alpine 标记文件路径（供测试）。
+    local bin="$1"
+    "$bin" version >/dev/null 2>&1 && return 0
+    local alpine_release="${ALPINE_RELEASE_FILE:-/etc/alpine-release}"
+    if [ -f "$alpine_release" ] || ldd --version 2>&1 | grep -qi musl; then
+        log_info "二进制无法直接运行，尝试安装 gcompat 兼容层..."
+        # 子 shell 跑 pkg_install：其内部 die 只退出子 shell，不中断安装主流程
+        ( pkg_install gcompat ) >/dev/null 2>&1 || log_warn "gcompat 安装失败"
+        "$bin" version >/dev/null 2>&1 && return 0
+    fi
+    return 1
+}
+
 install_main() {
     local yes=0
     [ "${1:-}" = "--yes" ] && yes=1
@@ -53,6 +69,8 @@ install_main() {
     [ -n "$bin" ] || die "压缩包内未找到 sing-box 二进制"
 
     install -m 0755 "$bin" "$SB_BIN" || die "安装到 $SB_BIN 失败"
+    ensure_binary_runnable "$SB_BIN" \
+        || die "sing-box 二进制无法运行（$SB_BIN version 失败）；musl 系统请确认 gcompat 已安装"
     log_ok "已安装：$("$SB_BIN" version 2>/dev/null | head -1)"
 
     ensure_etc

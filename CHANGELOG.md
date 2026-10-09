@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## v0.2.1（2026-10-09）
+
+### 修复
+- Alpine（musl）兼容：sing-box 1.14.x 官方二进制为 glibc 动态链接，在 musl 系统上直接执行报 `not found`。安装后新增二进制冒烟测试（`sing-box version`），失败且检测到 musl 时自动安装 `gcompat` 兼容层；仍失败则报错退出，不再静默装一个跑不起来的服务。`pkg_name` 新增 `gcompat` 映射（仅 apk 有，其余包管理器无映射自动跳过）。
+
 ## v0.2.0（2026-10-09）
 
 ### 一键安装
