@@ -31,6 +31,7 @@ SingBox-YUY v$SB_VERSION - 现代化 sing-box 一键安装/运维工具
   sb-mgr sub [start|stop|restart|regen] | sb-mgr sub-regen
   sb-mgr node-export --out FILE --password PW | sb-mgr node-import --in FILE --password PW [--yes]
   sb-mgr check | update | set-host <h> | tui | version | help
+  sb-mgr self-update              # 仅单文件版：从 $SB_DIST_URL 更新自身
 
 无参数时进入 TUI 交互菜单。
 EOF
@@ -77,6 +78,36 @@ cmd_install() { # install [--proto P] [--port N] [--domain D] [--sni S] [--yes]
     fi
 }
 
+cmd_self_update() {
+    # 仅单文件 bundled 模式可用；源码模式请用 git pull
+    if [ "${SB_BUNDLED:-}" != "1" ]; then
+        die "self-update 仅单文件版（sb）可用；源码版请用 git pull 更新"
+    fi
+    local self="${SB_SELF:-}"
+    [ -n "$self" ] && [ -f "$self" ] || die "无法定位自身文件，拒绝更新"
+    grep -q '^SB_DIST_VERSION=' "$self" 2>/dev/null \
+        || die "目标不是 SingBox-YUY 单文件（$self），拒绝更新"
+    local old_ver="$SB_DIST_VERSION" new_ver tmp
+    tmp="$(mktemp)" || die "mktemp 失败"
+    log_info "下载新版：$SB_DIST_URL"
+    if ! curl -fsSL --retry 2 -m 120 "$SB_DIST_URL" -o "$tmp"; then
+        rm -f "$tmp"; die "下载失败，请检查网络或 SB_DIST_URL"
+    fi
+    grep -q '^SB_DIST_VERSION=' "$tmp" \
+        || { rm -f "$tmp"; die "下载的文件不是有效的 SingBox-YUY 单文件"; }
+    new_ver="$(sed -n 's/^SB_DIST_VERSION="\(.*\)"$/\1/p' "$tmp" | head -1)"
+    [ -n "$new_ver" ] || new_ver="未知"
+    if [ "$new_ver" = "$old_ver" ]; then
+        rm -f "$tmp"; log_ok "已是最新版（v$old_ver），无需更新"; return 0
+    fi
+    cat "$tmp" > "$self" || { rm -f "$tmp"; die "写入 $self 失败"; }
+    rm -f "$tmp"
+    chmod +x "$self"
+    # 删除版本标记，下次运行时重新释放 payload
+    rm -f "${SB_HOME:?SB_HOME 未设置}/.dist_version"
+    log_ok "已更新：v$old_ver -> v$new_ver（下次运行时自动释放新 payload）"
+}
+
 cmd_check() {
     ensure_etc
     [ -x "$SB_BIN" ] || die "未找到 sing-box：$SB_BIN（先 sb-mgr install）"
@@ -117,6 +148,7 @@ main() {
         node-export) shift; crypto_export_main "$@" ;;
         node-import) shift; crypto_import_main "$@" ;;
         check)    cmd_check ;;
+        self-update) cmd_self_update ;;
         set-host) shift; cmd_set_host "$@" ;;
         *) log_err "未知命令：$cmd"; usage; exit 2 ;;
     esac

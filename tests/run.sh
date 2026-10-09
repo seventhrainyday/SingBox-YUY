@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # tests/run.sh - SingBox-YUY 一键测试（CI 与本地通用）
-# 1. lint：shellcheck + bash -n + py_compile
+# 0. 预构建 dist/sb（[1/7] lint 与 [9/9] 需要）
+# 1. lint：shellcheck + bash -n + py_compile（含 dist/build.sh 与 dist/sb）
 # 2. builder.py --test 生成示例 -> 真实 sing-box check 逐个校验 + clash YAML 结构校验
 # 3. crypto 加密->解密回环 diff
 # 4. subsrv.py --test 冒烟
 # 5. sb-mgr 端到端：add/del/link/export/relay（临时 SB_ETC）
+# 6. （预留）
+# 7. 多系统逻辑自测（detect_pm + 包名映射）
+# 8. 二进制冒烟测试 + gcompat 兜底
+# 9. 单文件 bundle：重复构建确定性 / payload 释放与幂等 / bundle 端到端 / self-update
 # 任一失败即非零退出。
 set -euo pipefail
 
@@ -12,6 +17,7 @@ PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TESTDIR="/tmp/sb-mgr-test"
 SBDIR="/tmp/sb-mgr-singbox"
 export SB_BIN="$SBDIR/sing-box"
+SB_VERSION_SRC="$(sed -n 's/^SB_VERSION="\(.*\)"$/\1/p' "$PROJ/lib/common.sh" | head -1)"
 
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); printf '[PASS] %s\n' "$*"; }
@@ -22,13 +28,17 @@ if command -v shellcheck >/dev/null 2>&1; then SC_BIN="shellcheck";
 elif [ -x "$PROJ/.tools/shellcheck" ]; then SC_BIN="$PROJ/.tools/shellcheck";
 elif [ -x "$HOME/workspace/.tools/shellcheck" ]; then SC_BIN="$HOME/workspace/.tools/shellcheck"; fi
 
+# 单文件 bundle 预构建（[1/7] lint 与 [9/9] 需要 dist/sb 存在）
+bash "$PROJ/dist/build.sh" >/dev/null 2>&1 || fail "dist/build.sh 构建失败"
+[ -x "$PROJ/dist/sb" ] || fail "dist/sb 未生成或不可执行"
+
 echo "=== [1/7] lint ==="
 if [ -z "$SC_BIN" ]; then fail "未找到 shellcheck"; else
-    if "$SC_BIN" -S warning "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh" "$PROJ/install.sh"; then
+    if "$SC_BIN" -S warning "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh" "$PROJ/install.sh" "$PROJ/dist/build.sh" "$PROJ/dist/sb"; then
         ok "shellcheck -S warning 零警告"
     else fail "shellcheck 发现警告"; fi
 fi
-for f in "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh" "$PROJ/install.sh"; do
+for f in "$PROJ"/lib/*.sh "$PROJ/sb-mgr" "$PROJ/tests/run.sh" "$PROJ/install.sh" "$PROJ/dist/build.sh" "$PROJ/dist/sb"; do
     bash -n "$f" || { fail "bash -n 失败：$f"; }
 done
 ok "bash -n 全部通过"
@@ -334,6 +344,91 @@ run_ensure() {
     && ok "gcompat 在 apk 下映射为 gcompat" || fail "gcompat/apk 映射错误"
 [ -z "$(bash -c '. "$0" >/dev/null 2>&1; pkg_name gcompat apt-get' "$PROJ/lib/common.sh")" ] \
     && ok "gcompat 在 apt-get 下无映射（自动跳过）" || fail "gcompat 不应在 apt-get 下有映射"
+
+echo "=== [9/9] 单文件 bundle（build/释放/e2e/self-update）==="
+# 9.1 重复构建确定性
+cp "$PROJ/dist/sb" "$TESTDIR/sb.before"
+bash "$PROJ/dist/build.sh" >/dev/null 2>&1
+if cmp -s "$PROJ/dist/sb" "$TESTDIR/sb.before"; then
+    ok "重复构建输出一致（确定性）"
+else
+    fail "重复构建输出不一致"
+fi
+[ -x "$PROJ/dist/sb" ] && ok "dist/sb 存在且可执行" || fail "dist/sb 缺失"
+
+# 9.2 payload 释放 + 版本标记 + 幂等
+SBHOME="$TESTDIR/sbhome"; rm -rf "$SBHOME"
+SB_HOME="$SBHOME" bash "$PROJ/dist/sb" version >/dev/null 2>&1 \
+    || fail "bundle version 执行失败"
+for f in py/builder.py py/subsrv.py py/aesgcm.py \
+         systemd/sing-box.service systemd/singbox-yuy-sub.service \
+         openrc/singbox.initd openrc/singbox-yuy-sub.initd; do
+    src="$f"; case "$f" in py/*) src="lib/$(basename "$f")";; esac
+    if [ -f "$SBHOME/$f" ] && cmp -s "$SBHOME/$f" "$PROJ/$src"; then
+        ok "payload 释放一致：$f"
+    else
+        fail "payload 缺失或不一致：$f"
+    fi
+done
+[ "$(cat "$SBHOME/.dist_version" 2>/dev/null)" = "$SB_VERSION_SRC" ] \
+    && ok "版本标记 .dist_version 正确" || fail ".dist_version 内容错误"
+# 幂等：版本未变时不重复释放（mtime 不应变化）
+touch -d "2020-01-01" "$SBHOME/py/builder.py"
+SB_HOME="$SBHOME" bash "$PROJ/dist/sb" version >/dev/null 2>&1
+if [ "$(stat -c %y "$SBHOME/py/builder.py" | cut -d- -f1)" = "2020" ]; then
+    ok "版本未变时不重复释放 payload"
+else
+    fail "payload 被意外重写"
+fi
+# 版本变化时重新释放
+printf '0.0.0\n' > "$SBHOME/.dist_version"
+SB_HOME="$SBHOME" bash "$PROJ/dist/sb" version >/dev/null 2>&1
+if [ "$(stat -c %y "$SBHOME/py/builder.py" | cut -d- -f1)" != "2020" ]; then
+    ok "版本变化时重新释放 payload"
+else
+    fail "版本变化后 payload 未重释放"
+fi
+
+# 9.3 bundle 端到端（SB_HOME/SB_ETC 覆盖，非 root 友好）
+if SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" add --proto ss2022 --port 18443 --yes >/dev/null 2>&1; then
+    ok "bundle add ss2022 成功"
+    _bid=$(SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" list 2>/dev/null | grep -o '[a-f0-9]\{8\}' | head -1)
+    [ -n "$_bid" ] && ok "bundle list 找到节点" || fail "bundle list 未找到节点"
+    SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" link "$_bid" 2>/dev/null | grep -q '^ss://' \
+        && ok "bundle link 生成 ss:// 链接" || fail "bundle link 失败"
+    SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" export --format clash 2>/dev/null | grep -q 'proxies:' \
+        && ok "bundle export clash 成功" || fail "bundle export clash 失败"
+    SB_HOME="$SBHOME" SB_ETC="$SBHOME/etc" bash "$PROJ/dist/sb" del "$_bid" >/dev/null 2>&1 \
+        && ok "bundle del 成功" || fail "bundle del 失败"
+else
+    fail "bundle add ss2022 失败"
+fi
+
+# 9.4 self-update（file:// 伪造远端）
+printf '#!/usr/bin/env bash\nSB_DIST_VERSION="9.9.9"\necho fake-bundle\n' > "$SBHOME/fake-sb"
+cp "$PROJ/dist/sb" "$TESTDIR/sbself"; chmod +x "$TESTDIR/sbself"
+if SB_HOME="$SBHOME" SB_DIST_URL="file://$SBHOME/fake-sb" bash "$TESTDIR/sbself" self-update >/dev/null 2>&1; then
+    grep -q 'fake-bundle' "$TESTDIR/sbself" \
+        && ok "self-update 替换自身成功" || fail "self-update 未替换内容"
+    [ ! -f "$SBHOME/.dist_version" ] \
+        && ok "self-update 后删除版本标记" || fail ".dist_version 未删除"
+else
+    fail "self-update 执行失败"
+fi
+# 非法文件必须被拒绝
+printf 'not a bundle\n' > "$SBHOME/fake-bad"
+cp "$PROJ/dist/sb" "$TESTDIR/sbself2"; chmod +x "$TESTDIR/sbself2"
+if SB_HOME="$SBHOME" SB_DIST_URL="file://$SBHOME/fake-bad" bash "$TESTDIR/sbself2" self-update >/dev/null 2>&1; then
+    fail "self-update 应拒绝非法文件"
+else
+    ok "self-update 拒绝非法文件"
+fi
+# repo 模式必须拒绝 self-update
+if bash "$PROJ/sb-mgr" self-update >/dev/null 2>&1; then
+    fail "repo 模式 self-update 应被拒绝"
+else
+    ok "repo 模式 self-update 被拒绝"
+fi
 
 echo "----------------------------------------"
 printf '结果：%d 通过，%d 失败\n' "$PASS" "$FAIL"

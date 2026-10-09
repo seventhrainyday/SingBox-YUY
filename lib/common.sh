@@ -5,7 +5,7 @@
 #   SB_BIN  sing-box 二进制路径（默认 /usr/local/bin/sing-box）
 
 # shellcheck disable=SC2034
-SB_VERSION="0.2.1"
+SB_VERSION="0.3.0"
 SB_ETC="${SB_ETC:-/etc/sing-box}"
 SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 NODES_JSON="$SB_ETC/nodes.json"
@@ -242,6 +242,11 @@ now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # ---------- 配置渲染 + 校验 + 回滚 ----------
 builder_py() {
+    # bundled 单文件模式：payload 释放到 $SB_HOME/py
+    if [ "${SB_BUNDLED:-}" = "1" ]; then
+        printf '%s/py/builder.py' "${SB_HOME:?SB_HOME 未设置}"
+        return 0
+    fi
     local d
     d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     printf '%s/builder.py' "$d"

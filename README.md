@@ -32,22 +32,32 @@
 
 ## 快速开始
 
-一行命令安装（自动 clone 到 `/opt/SingBox-YUY` 并执行 `sb-mgr install`）：
+一行命令安装（下载单文件 `sb` 到 `/usr/local/bin/sb`，之后永远只用 `sb`）：
+
+```bash
+(curl -LfsS https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/dist/sb -o /usr/local/bin/sb || wget -q https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/dist/sb -O /usr/local/bin/sb) && chmod +x /usr/local/bin/sb && sb install
+```
+
+> 已是 root（提示符为 `#`）无需 sudo；若 `curl`/`wget` 都没有，先装 curl。
+
+装完之后：
+
+```bash
+sb install --proto hy2 --port 8443 --yes   # 装 sing-box + 直接建好 Hysteria2 节点
+sb add --proto reality --port 443          # 交互式添加 Reality 节点（选 SNI）
+sb link <id> --qr                          # 查看链接 / 二维码
+sb self-update                             # 更新 sb 自身到最新版
+sb                                         # 无参数进 TUI 交互菜单
+```
+
+备选安装方式（仓库根目录 `install.sh`，会 git clone 完整源码到 `/opt/SingBox-YUY`）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/install.sh | sudo bash
+# 已是 root 请去掉 sudo，直接 | bash
 ```
 
-> 已是 root（提示符为 `#`）请去掉 `sudo`，直接 `| bash`；精简镜像若无 `sudo` 也一样去掉（脚本内会提示）。
-
-带参数一键装（参数透传给 `sb-mgr install`，示例：直接装好 Hysteria2 节点）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/install.sh \
-  | sudo bash -s -- --proto hy2 --port 8443 --yes
-```
-
-备选（手动 git clone）：
+手动 git clone（开发/改代码用）：
 
 ```bash
 git clone https://github.com/seventhrainyday/SingBox-YUY.git /opt/SingBox-YUY
@@ -108,6 +118,7 @@ sudo ./sb-mgr
 | `sb-mgr node-import --in f.enc --password PW` | 解密导入并合并（按 id 去重） |
 | `sb-mgr check` | 重渲染 + `sing-box check` 校验当前配置 |
 | `sb-mgr tui` / `sb-mgr version` / `sb-mgr help` | 交互菜单 / 版本 / 帮助 |
+| `sb self-update` | 仅单文件版：从 SB_DIST_URL 下载新版替换自身 |
 
 ## TUI 菜单
 
@@ -196,7 +207,21 @@ AES 加密回环 diff → 订阅服务冒烟（3 路由 200 + 错误 token 404�
 `sb-mgr add/link/export/relay/del` 端到端 → builder 端口冲突负向测试。
 
 GitHub Actions（`.github/workflows/ci.yml`）：lint job → test 矩阵
-`ubuntu-22.04 / ubuntu-24.04 / debian:11 / debian:12 / alpine:latest / almalinux:9 / rockylinux:9`。
+`ubuntu-22.04 / ubuntu-24.04 / debian:11 / debian:12 / alpine:latest / almalinux:9 / rockylinux:9` →
+dist-check（bundle 与源码一致性）。
+
+## 单文件发行版
+
+`/usr/local/bin/sb` 即 `dist/sb`：单个 bash 文件，内嵌全部 `lib/*.sh` 与 7 个 payload
+（`py/*.py`、systemd/openrc 模板），base64 编码。首次运行时自动释放 payload 到
+`$SB_HOME`（root 默认为 `/opt/singbox-yuy`，普通用户为 `~/.singbox-yuy`，
+`SB_HOME` 环境变量可覆盖），并写入版本标记；版本变化或文件缺失时自动重新释放。
+
+- `dist/sb` **由 `dist/build.sh` 生成，必须提交进仓库**（用户从
+  `raw.githubusercontent.com` 直接 curl 它）。
+- 不要手工改 `dist/sb`：改源码后重跑 `bash dist/build.sh` 重新生成。
+- `sb self-update`：从 `SB_DIST_URL`（默认即上述 raw 链接，可用环境变量覆盖）
+  下载新版替换自身，`curl -fsSL` 失败或内容校验不通过则拒绝更新。
 
 ## FAQ
 

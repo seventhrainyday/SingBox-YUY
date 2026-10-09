@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## v0.3.0（2026-10-09）
+
+### 单文件发行版
+- 新增 `dist/build.sh`：把全部 `lib/*.sh` 内联 + 7 个 payload（`py/builder.py`、`py/subsrv.py`、`py/aesgcm.py`、systemd/openrc 模板）base64 内嵌，打包成单个可执行文件 `dist/sb`（~130KB），提交进仓库供用户直接 curl。
+- 安装体验：`(curl -LfsS <raw>/dist/sb -o /usr/local/bin/sb || wget -q <raw>/dist/sb -O /usr/local/bin/sb) && chmod +x /usr/local/bin/sb && sb install`，之后永远只用 `sb`。
+- bundle 运行时自动释放 payload 到 `$SB_HOME`（root 默认 `/opt/singbox-yuy`，普通用户 `~/.singbox-yuy`），版本标记变化或文件缺失时自动重释放；`SB_HOME`/`SB_DIST_URL` 环境变量可覆盖。
+- 新增 `sb self-update`：仅单文件版可用，从 `SB_DIST_URL` 下载新版替换自身（校验 bundle 标记，非法文件拒绝写入）。
+- 源码兼容补丁（`SB_BUNDLED=1` 分支，repo 模式行为不变）：`builder_py()`、`install_main` 的 `register_service` root、`register_autoupdate` 的管理命令路径（安装时解析 `command -v sb`）、`sub.sh` 的 root/subsrv 路径与 service 模板变量替换、`crypto.sh` 的 `LIBDIR`、`subsrv.py` 的管理命令解析顺序（SB_MGR → ../sb-mgr → `command -v sb` → /usr/local/bin/sb）。
+- 根目录 `install.sh`（git clone 方式）保留为备选安装方式。
+
 ## v0.2.1（2026-10-09）
 
 ### 修复

@@ -6,12 +6,13 @@
 #   /sub/<token>/clash    -> Mihomo YAML
 # token 不匹配 -> 404。
 # 配置来源：环境变量 SB_TOKEN / SB_PORT，缺省读 $SB_ETC/settings.json。
-# 内容通过调用 sb-mgr export 生成（SB_MGR 指定 sb-mgr 路径，缺省为同级 ../sb-mgr）。
+# 内容通过调用管理命令 export 生成（解析顺序：SB_MGR 环境变量 -> 源码旁 ../sb-mgr -> PATH 中的 sb -> /usr/local/bin/sb）。
 
 import base64
 import hmac
 import json
 import os
+import shutil
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,8 +51,17 @@ def get_port():
 
 
 def mgr_path():
-    m = os.environ.get("SB_MGR", DEFAULT_MGR)
-    return m if os.path.exists(m) else DEFAULT_MGR
+    # 解析顺序：SB_MGR 环境变量 -> 源码旁 ../sb-mgr（存在才用）
+    #           -> PATH 中的 sb -> /usr/local/bin/sb（单文件版默认安装位）
+    m = os.environ.get("SB_MGR", "").strip()
+    if m and os.path.exists(m):
+        return m
+    if os.path.exists(DEFAULT_MGR):
+        return DEFAULT_MGR
+    v = shutil.which("sb")
+    if v:
+        return v
+    return "/usr/local/bin/sb"
 
 
 def export_content(fmt):
@@ -77,7 +87,7 @@ def export_content(fmt):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SingBox-YUY-Sub/0.2.1"
+    server_version = "SingBox-YUY-Sub/0.3.0"
 
     def log_message(self, *args):
         sys.stderr.write("[subsrv] %s %s\n" % (self.command, self.path))

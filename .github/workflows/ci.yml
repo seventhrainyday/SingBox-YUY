@@ -14,7 +14,7 @@ jobs:
       - name: 安装 shellcheck
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: shellcheck（零警告）
-        run: shellcheck -S warning lib/*.sh sb-mgr tests/run.sh install.sh
+        run: shellcheck -S warning lib/*.sh sb-mgr tests/run.sh install.sh dist/build.sh dist/sb
       - name: bash 语法检查
         run: |
           for f in lib/*.sh sb-mgr tests/run.sh install.sh openrc/*.initd; do bash -n "$f"; done
@@ -62,3 +62,14 @@ jobs:
         run: ${{ matrix.install }}
       - name: 运行测试套件
         run: bash tests/run.sh
+
+  dist-check:
+    name: dist-check
+    needs: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 重新生成 bundle 并校验与提交一致
+        run: |
+          bash dist/build.sh
+          git diff --exit-code -- dist/sb || { echo "dist/sb 与源码不一致，请重跑 bash dist/build.sh 后提交"; exit 1; }

@@ -48,18 +48,33 @@ sub_svc_main() { # start|stop|restart
     tok=$(json_get "$SETTINGS_JSON" '.sub_token // ""')
     [ -n "$tok" ] || { sub_regen_main >/dev/null; }
     need_root
-    local root
-    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    # bundled 单文件模式：模板从 $SB_HOME payloads 取，路径指向 bundle 自身
+    local root mgr_bin srvpy
+    if [ "${SB_BUNDLED:-}" = "1" ]; then
+        root="${SB_HOME:?SB_HOME 未设置}"
+        mgr_bin="${SB_SELF:-$(command -v sb 2>/dev/null || echo /usr/local/bin/sb)}"
+        srvpy="$SB_HOME/py/subsrv.py"
+    else
+        root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+        mgr_bin="$root/sb-mgr"
+        srvpy="$root/lib/subsrv.py"
+    fi
     if has_systemd; then
-        install -m 0644 "$root/systemd/singbox-yuy-sub.service" \
-            "/etc/systemd/system/${SUB_SVC}.service"
+        sed -e "s|^Environment=SB_MGR=.*|Environment=SB_MGR=$mgr_bin|" \
+            -e "s|^ExecStart=/usr/bin/python3 .*|ExecStart=/usr/bin/python3 $srvpy|" \
+            "$root/systemd/singbox-yuy-sub.service" \
+            > "/etc/systemd/system/${SUB_SVC}.service"
+        chmod 0644 "/etc/systemd/system/${SUB_SVC}.service"
         svc_daemon_reload
     elif has_openrc; then
-        install -m 0755 "$root/openrc/singbox-yuy-sub.initd" \
-            "/etc/init.d/${SUB_SVC}"
+        sed -e "s|^: \"\${SB_MGR:=.*\"|: \"\${SB_MGR:=$mgr_bin}\"|" \
+            -e "s|^: \"\${SB_SUBSRV:=.*\"|: \"\${SB_SUBSRV:=$srvpy}\"|" \
+            "$root/openrc/singbox-yuy-sub.initd" \
+            > "/etc/init.d/${SUB_SVC}"
+        chmod 0755 "/etc/init.d/${SUB_SVC}"
     else
         log_warn "未检测到 systemd/OpenRC，请前台手动运行："
-        echo "  SB_ETC=$SB_ETC python3 $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/subsrv.py"
+        echo "  SB_ETC=$SB_ETC python3 $srvpy"
         return 0
     fi
     case "$act" in

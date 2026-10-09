@@ -79,7 +79,11 @@ install_main() {
         python3 "$(builder_py)" || log_warn "初始配置渲染失败，稍后可用 sb-mgr check 重试"
     fi
 
-    register_service "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    if [ "${SB_BUNDLED:-}" = "1" ]; then
+        register_service "${SB_HOME:?SB_HOME 未设置}"
+    else
+        register_service "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    fi
     register_autoupdate
 
     trap - EXIT
@@ -111,6 +115,16 @@ register_autoupdate() {
     # 自动更新：cron 优先；OpenRC 无 cron 时走 /etc/periodic/weekly；都没有则手动提示
     need_root
     local script=/usr/local/bin/singbox-auto-update
+    # 管理命令路径：优先已安装的 sb（单文件版），否则源码树 sb-mgr
+    local mgr_bin
+    mgr_bin="$(command -v sb 2>/dev/null || true)"
+    if [ -z "$mgr_bin" ]; then
+        if [ "${SB_BUNDLED:-}" = "1" ]; then
+            mgr_bin="${SB_SELF:-/usr/local/bin/sb}"
+        else
+            mgr_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sb-mgr"
+        fi
+    fi
     cat > "$script" <<'EOF'
 #!/usr/bin/env bash
 # SingBox-YUY 每周自动更新 sing-box（由 install.sh 注册）
@@ -121,11 +135,13 @@ TAG=$(curl -fsS -m 30 https://api.github.com/repos/SagerNet/sing-box/releases/la
 if [ -n "$TAG" ] && [ "$TAG" != "null" ] && ! "$SB_BIN" version 2>/dev/null | grep -q "$TAG"; then
     logger -t singbox-yuy "sing-box $CUR -> $TAG，开始更新"
     export SB_MGR_YES=1
-    /opt/SingBox-YUY/sb-mgr install --yes >/var/log/singbox-yuy-update.log 2>&1 || logger -t singbox-yuy "自动更新失败，见 /var/log/singbox-yuy-update.log"
+    @MGR_BIN@ install --yes >/var/log/singbox-yuy-update.log 2>&1 || logger -t singbox-yuy "自动更新失败，见 /var/log/singbox-yuy-update.log"
 else
     logger -t singbox-yuy "sing-box 已是最新（$TAG）"
 fi
 EOF
+    # shellcheck disable=SC2086
+    sed -i "s|@MGR_BIN@|$mgr_bin|g" "$script"
     chmod 0755 "$script"
     if command -v crontab >/dev/null 2>&1; then
         local cronline="30 3 * * 1 root $script"

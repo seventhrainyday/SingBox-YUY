@@ -10,6 +10,9 @@
 #     不依赖 openssl enc。
 
 LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${SB_BUNDLED:-}" = "1" ]; then
+    LIBDIR="${SB_HOME:?SB_HOME 未设置}/py"
+fi
 
 _have_crypto_py() {
     python3 -c "from cryptography.hazmat.primitives.ciphers.aead import AESGCM" 2>/dev/null
