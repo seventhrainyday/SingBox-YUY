@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SingBox-YUY 单文件发行版 v0.3.2
+# SingBox-YUY 单文件发行版 v0.3.3
 # 由 dist/build.sh 生成，请勿手工修改；改源码后重跑 build。
 set -euo pipefail
 
@@ -12,7 +12,7 @@ else
     SB_HOME="${SB_HOME:-${HOME:-/tmp}/.singbox-yuy}"
 fi
 export SB_HOME
-SB_DIST_VERSION="0.3.2"
+SB_DIST_VERSION="0.3.3"
 SB_DIST_URL="${SB_DIST_URL:-https://raw.githubusercontent.com/seventhrainyday/SingBox-YUY/main/dist/sb}"
 export SB_DIST_VERSION SB_DIST_URL
 # 自定位：PATH 里能找到就用绝对路径，否则回退 $0（./dist/sb、bash dist/sb 等）
@@ -518,7 +518,7 @@ eSA9IG91dC5zdGRvdXQKICAgIGlmIGZtdCA9PSAidXJpIjoKICAgICAgICBib2R5ID0gYmFzZTY0
 LmI2NGVuY29kZSgKICAgICAgICAgICAgYm9keS5lbmNvZGUoInV0Zi04IikpLmRlY29kZSgiYXNj
 aWkiKQogICAgcmV0dXJuIDIwMCwgY3R5cGUsIGJvZHkKCgpjbGFzcyBIYW5kbGVyKEJhc2VIVFRQ
 UmVxdWVzdEhhbmRsZXIpOgogICAgc2VydmVyX3ZlcnNpb24gPSAiU2luZ0JveC1ZVVktU3ViLzAu
-My4yIgoKICAgIGRlZiBsb2dfbWVzc2FnZShzZWxmLCAqYXJncyk6CiAgICAgICAgc3lzLnN0ZGVy
+My4zIgoKICAgIGRlZiBsb2dfbWVzc2FnZShzZWxmLCAqYXJncyk6CiAgICAgICAgc3lzLnN0ZGVy
 ci53cml0ZSgiW3N1YnNydl0gJXMgJXNcbiIgJSAoc2VsZi5jb21tYW5kLCBzZWxmLnBhdGgpKQoK
 ICAgIGRlZiBfc2VuZChzZWxmLCBjb2RlLCBjdHlwZSwgYm9keSk6CiAgICAgICAgZGF0YSA9IGJv
 ZHkuZW5jb2RlKCJ1dGYtOCIpCiAgICAgICAgc2VsZi5zZW5kX3Jlc3BvbnNlKGNvZGUpCiAgICAg
@@ -792,7 +792,7 @@ __sb_ensure_payloads
 #   SB_BIN  sing-box 二进制路径（默认 /usr/local/bin/sing-box）
 
 # shellcheck disable=SC2034
-SB_VERSION="0.3.2"
+SB_VERSION="0.3.3"
 SB_ETC="${SB_ETC:-/etc/sing-box}"
 SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 NODES_JSON="$SB_ETC/nodes.json"
@@ -1416,14 +1416,16 @@ _pick_sni() { # $1=已指定sni(可空) $2=yes模式(1非交互)
     local sni="$1" yes="$2"
     if [ -n "$sni" ]; then printf '%s' "$sni"; return 0; fi
     if [ "$yes" = "1" ] || [ ! -t 0 ]; then printf 'www.sony.com'; return 0; fi
-    log_info "请选择 Reality handshake SNI（推荐列表）："
+    # 注意：本函数常被 $() 包裹调用，所有交互提示必须走 stderr，
+    # 只有最终选中的 sni 走 stdout，否则提示被吞、用户看到"卡死"，sni 还会被菜单文字污染
+    log_info "请选择 Reality handshake SNI（推荐列表）：" >&2
     local i=1 s
-    for s in $SNI_RECOMMEND; do printf '  %d) %s\n' "$i" "$s"; i=$((i+1)); done
-    printf '  0) 自定义输入\n'
-    printf '输入序号 [1]：'; read -r n
+    for s in $SNI_RECOMMEND; do printf '  %d) %s\n' "$i" "$s" >&2; i=$((i+1)); done
+    printf '  0) 自定义输入\n' >&2
+    printf '输入序号 [1]：' >&2; read -r n
     n="${n:-1}"
     if [ "$n" = "0" ]; then
-        printf '输入自定义 SNI：'; read -r sni
+        printf '输入自定义 SNI：' >&2; read -r sni
         [ -n "$sni" ] || die "SNI 不能为空"
         printf '%s' "$sni"
     else

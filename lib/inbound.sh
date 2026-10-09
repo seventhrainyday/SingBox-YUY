@@ -20,14 +20,16 @@ _pick_sni() { # $1=已指定sni(可空) $2=yes模式(1非交互)
     local sni="$1" yes="$2"
     if [ -n "$sni" ]; then printf '%s' "$sni"; return 0; fi
     if [ "$yes" = "1" ] || [ ! -t 0 ]; then printf 'www.sony.com'; return 0; fi
-    log_info "请选择 Reality handshake SNI（推荐列表）："
+    # 注意：本函数常被 $() 包裹调用，所有交互提示必须走 stderr，
+    # 只有最终选中的 sni 走 stdout，否则提示被吞、用户看到"卡死"，sni 还会被菜单文字污染
+    log_info "请选择 Reality handshake SNI（推荐列表）：" >&2
     local i=1 s
-    for s in $SNI_RECOMMEND; do printf '  %d) %s\n' "$i" "$s"; i=$((i+1)); done
-    printf '  0) 自定义输入\n'
-    printf '输入序号 [1]：'; read -r n
+    for s in $SNI_RECOMMEND; do printf '  %d) %s\n' "$i" "$s" >&2; i=$((i+1)); done
+    printf '  0) 自定义输入\n' >&2
+    printf '输入序号 [1]：' >&2; read -r n
     n="${n:-1}"
     if [ "$n" = "0" ]; then
-        printf '输入自定义 SNI：'; read -r sni
+        printf '输入自定义 SNI：' >&2; read -r sni
         [ -n "$sni" ] || die "SNI 不能为空"
         printf '%s' "$sni"
     else
