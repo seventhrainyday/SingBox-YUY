@@ -224,7 +224,7 @@ tui_main() {
     ensure_etc
     while true; do
         local c
-        c=$(tui_menu "SingBox-YUY v$SBYUY_VERSION" "现代化 sing-box 运维工具" \
+        c=$(tui_menu "SingBox-YUY v$SB_VERSION" "现代化 sing-box 运维工具" \
             envcheck "① 环境自检" \
             install "② 安装/更新 sing-box" \
             add "③ 添加节点" \
