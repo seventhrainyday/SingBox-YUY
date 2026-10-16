@@ -5,6 +5,9 @@
 ### 修复
 - CI 容器矩阵全红修复（v0.4.0 推送后 5 个容器 job 全灭）：debian-11 切 archive.debian.org（bullseye EOL，security 源已归档）；debian-12/alpine/debian-11 补 shellcheck（tests/run.sh 缺失时直接 fail）；alpine 补 gcompat（glibc 动态链接的 sing-box 二进制在 musl 下 exit 127）；almalinux-9/rockylinux-9 加 epel-release + ShellCheck（EPEL 提供）。
 
+### 文档
+- README 已知限制新增条目：sing-box 全版本客户端（含 NekoBox）连 Xray ≥26.9.8 的 Reality 节点必失败，与 uTLS 指纹无关——服务端要求 ClientHello 携带 X25519MLKEM768 密钥份额，sing-box 的 Reality 客户端层会将其丢弃（上游 SagerNet/sing-box#4520 仍 open）；临时方案：客户端改用 Xray 内核（v2rayNG），或服务端降级到 <26.9.8。
+
 ## v0.4.0（2026-10-09）
 
 ### 新增
