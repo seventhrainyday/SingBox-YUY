@@ -248,6 +248,7 @@ dist-check（bundle 与源码一致性）。
 - Mihomo 的 `anytls` 代理类型需较新版本内核才支持。
 - WARP 注册依赖 `api.cloudflareclient.com` 可达；部分网络需先走代理。
 - 架构支持 amd64 / arm64 / armv7；32 位 armv7 需 sing-box 官方提供对应构建。
+- sing-box 全版本客户端（含 NekoBox）连 Xray ≥26.9.8 的 Reality 节点必失败（`reality verification failed`），与 uTLS 指纹无关：服务端要求 ClientHello 携带 X25519MLKEM768 密钥份额，而 sing-box 在 `common/tls/reality_client.go` 的 `ClientHandshake` 里会把该份额从 SupportedCurves 与 KeyShare 扩展中主动滤掉再发出（2025-05 commit `dbdcce20a8` 引入，utls 的 Chrome 指纹本身其实带了这个份额）；第三方修复分支 `thatssoheil/sing-box@fix/reality-client-mlkem-keyshare`（commit `87f2d718a`，17 行删除）已对 Xray 26.9.30 与 26.6.27 双向验证通过且无回退，但上游 SagerNet/sing-box#4520 仍 open、无 PR、无合并。临时方案：客户端改用 Xray 内核（v2rayNG），或服务端降级到 <26.9.8。
 
 ## 许可证
 
