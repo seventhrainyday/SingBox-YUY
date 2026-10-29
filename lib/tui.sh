@@ -39,18 +39,24 @@ tui_menu() { # $1=标题 $2=提示 起始于$3: tag item tag item...
     if _have_whiptail; then
         whiptail --title "$title" --menu "$prompt" 20 70 12 "$@" 3>&1 1>&2 2>&3
     else
-        local tags=() items=() i=0 n=1
+        local tags=() items=() i=0
         while [ $# -ge 2 ]; do tags+=("$1"); items+=("$2"); shift 2; done
         printf '\n=== %s ===\n' "$title" >&2
         for i in "${!tags[@]}"; do printf '  %d) %s\n' "$((i+1))" "${items[$i]}" >&2; done
         printf '  0) 返回/退出\n' >&2
-        printf '请选择 [0-%d]：' "${#tags[@]}" >&2
-        read -r n
-        if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#tags[@]}" ]; then
-            printf '%s' "${tags[$((n-1))]}"
-        else
-            return 1
-        fi
+        local n
+        while true; do
+            printf '请选择 [0-%d]：' "${#tags[@]}" >&2
+            read -r n || return 1
+            n=$(_sanitize_choice "$n")
+            [ "$n" = "0" ] && return 1
+            if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#tags[@]}" ]; then
+                printf '%s' "${tags[$((n-1))]}"
+                return 0
+            fi
+            # 无效输入只提示重输，绝不退出程序（手滑/全角数字都不该把用户踢出去）
+            printf '无效输入，请输入 0-%d 的数字（中文输入法下请用半角数字）\n' "${#tags[@]}" >&2
+        done
     fi
 }
 
@@ -74,6 +80,7 @@ tui_add_node() {
         anytls) port=8443;; trojan) port=443;; ss2022) port=8388;;
     esac
     port=$(tui_input "添加节点" "监听端口" "$port") || return 0
+    port=$(_sanitize_choice "$port")
     remark=$(tui_input "添加节点" "备注（可空）" "") || remark=""
     case "$p" in
         reality) add_reality --port "$port" --remark "$remark" ;;
@@ -116,6 +123,7 @@ tui_modify_node() {
     remark=$(tui_input "修改节点" "新备注（空=不改）" "") || return 0
     [ -n "$remark" ] && args+=(--remark "$remark")
     port=$(tui_input "修改节点" "新端口（空=不改）" "") || return 0
+    port=$(_sanitize_choice "$port")
     [ -n "$port" ] && args+=(--port "$port")
     case "$proto" in
         reality|hy2|tuic|anytls|trojan)

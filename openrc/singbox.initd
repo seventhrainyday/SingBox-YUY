@@ -5,6 +5,10 @@
 
 description="sing-box proxy (managed by SingBox-YUY)"
 
+# 小内存机器友好：Go 堆增长软限制 + 更积极的 GC（空载无影响，防负载下内存膨胀）
+export GOGC=50
+export GOMEMLIMIT=48MiB
+
 command="/usr/local/bin/sing-box"
 command_args="run -c /etc/sing-box/config.json"
 pidfile="/run/singbox.pid"

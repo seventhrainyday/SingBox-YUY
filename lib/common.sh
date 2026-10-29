@@ -5,7 +5,7 @@
 #   SB_BIN  sing-box 二进制路径（默认 /usr/local/bin/sing-box）
 
 # shellcheck disable=SC2034
-SB_VERSION="0.4.0"
+SB_VERSION="0.4.1"
 SB_ETC="${SB_ETC:-/etc/sing-box}"
 SB_BIN="${SB_BIN:-/usr/local/bin/sing-box}"
 NODES_JSON="$SB_ETC/nodes.json"
@@ -70,14 +70,18 @@ pkg_name() {
     # $1=通用名 $2=包管理器 -> 实际包名（空=该 pm 无此包）
     local g="$1" pm="$2"
     case "$g" in
-        curl|jq|python3|openssl|ca-certificates|qrencode) echo "$g"; return 0 ;;
+        curl|jq|python3|openssl|ca-certificates) echo "$g"; return 0 ;;
+        qrencode)
+            # Alpine 的 qrencode 命令行工具在 libqrencode-tools 包里
+            case "$pm" in apk) echo "libqrencode-tools";; *) echo "qrencode";; esac
+            return 0 ;;
         iproute2)
             case "$pm" in apt-get|dnf|apk|pacman|zypper) echo "iproute2";; yum) echo "iproute";; esac
             return 0 ;;
         whiptail)
             case "$pm" in
-                apt-get|apk|yum) echo "whiptail" ;;
-                dnf|zypper) echo "newt" ;;
+                apt-get|yum) echo "whiptail" ;;
+                dnf|zypper|apk) echo "newt" ;;
                 pacman) echo "libnewt" ;;
             esac
             return 0 ;;
@@ -95,6 +99,18 @@ pkg_name() {
             return 0 ;;
     esac
     return 1
+}
+
+_sanitize_choice() {
+    # 清洗菜单/序号类输入：去回车与首尾空白，全角数字转半角。
+    # 中文输入法下数字常被发成全角（３），不转的话菜单会把合法选择误判为
+    # 无效输入；sed 用字节级替换，C locale 下同样有效（已实测）。
+    local s="$1"
+    s="${s//$'\r'/}"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s" | sed -e 's/０/0/g' -e 's/１/1/g' -e 's/２/2/g' -e 's/３/3/g' \
+        -e 's/４/4/g' -e 's/５/5/g' -e 's/６/6/g' -e 's/７/7/g' -e 's/８/8/g' -e 's/９/9/g'
 }
 
 pkg_install() {

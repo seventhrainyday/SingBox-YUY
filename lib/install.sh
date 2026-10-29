@@ -51,7 +51,24 @@ install_main() {
         if [ "$yes" -eq 0 ]; then
             printf '是否重新安装/更新到 %s？[y/N] ' "$tag"
             read -r ans
-            case "$ans" in [yY]*) ;; *) log_info "已取消"; return 0;; esac
+            case "$ans" in
+                [yY]*) ;;
+                *)
+                    # 不重装二进制，但把配置与服务定义刷新到当前脚本版本：
+                    # 脚本升级后旧配置/旧 unit 可能与新 sing-box 不兼容（如 1.14 的
+                    # DNS detour 硬错误），只 self-update 不刷新等于没修
+                    log_info "跳过二进制下载，刷新配置与服务定义..."
+                    ensure_etc
+                    python3 "$(builder_py)" || log_warn "配置渲染失败，可用 sb-mgr check 重试"
+                    if [ "${SB_BUNDLED:-}" = "1" ]; then
+                        refresh_service "${SB_HOME:?SB_HOME 未设置}"
+                    else
+                        refresh_service "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+                    fi
+                    log_ok "刷新完成（二进制保持不变：$cur）"
+                    return 0
+                    ;;
+            esac
         fi
     fi
 
@@ -89,6 +106,27 @@ install_main() {
     trap - EXIT
     rm -rf "$tmpd"
     log_ok "sing-box 安装完成"
+}
+
+refresh_service() {
+    # $1: 项目根目录（含 systemd/ 与 openrc/）
+    # 把已注册的服务定义刷新为当前脚本版本并重启（不重装二进制时用）
+    local root="$1"
+    [ -n "$root" ] || die "refresh_service 缺少项目根目录参数"
+    need_root
+    if has_systemd; then
+        install -m 0644 "$root/systemd/sing-box.service" /etc/systemd/system/sing-box.service
+        svc_daemon_reload
+        systemctl restart sing-box 2>/dev/null || systemctl start sing-box || true
+        log_ok "systemd 服务定义已刷新并重启"
+    elif has_openrc; then
+        install -m 0755 "$root/openrc/singbox.initd" /etc/init.d/singbox
+        rc-update add singbox default 2>/dev/null || true
+        rc-service singbox restart 2>/dev/null || rc-service singbox start || true
+        log_ok "OpenRC 服务定义已刷新并重启"
+    else
+        log_warn "未检测到 systemd/OpenRC，跳过服务刷新（前台运行：$SB_BIN run -c $CONFIG_JSON）"
+    fi
 }
 
 register_service() {

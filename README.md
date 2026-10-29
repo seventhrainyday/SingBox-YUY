@@ -237,6 +237,7 @@ dist-check（bundle 与源码一致性）。
 - **订阅服务不用 systemd/OpenRC 怎么跑？** `SB_ETC=/etc/sing-box python3 lib/subsrv.py` 前台运行；
   token/port 读 `settings.json`（或 `SB_TOKEN`/`SB_PORT` 环境变量）。
 - **Hysteria2 连不上？** 先确认 UDP 端口放行；脚本已自动调大 `net.core.rmem_max/wmem_max`。
+- **64MB 小内存机器能跑吗？** 不能稳定运行：sing-box 1.14 本体空载 RSS 约 59MB（实测，规则集全加载），加上系统与 sshd 必然超 64MB。128MB 起较稳。服务已内置 `GOMEMLIMIT=48MiB`+`GOGC=50` 软限制抑制负载下膨胀，规则集也有本地缓存（重启不重下）。
 - **ACME 签证书失败？** 域名必须解析到本机且 TCP 80 可从公网访问；也可先用自签跑通再换。
 - **AnyTLS 链接在手机上导入被截断？** 导出链接已是最短形式（仅 `insecure`+`sni` 两个参数）。
 - **relay 出站连不上？** 先 `sb-mgr export --format uri --id <源节点id>` 确认源链接本身可用。
@@ -247,7 +248,6 @@ dist-check（bundle 与源码一致性）。
 - Mihomo 的 `anytls` 代理类型需较新版本内核才支持。
 - WARP 注册依赖 `api.cloudflareclient.com` 可达；部分网络需先走代理。
 - 架构支持 amd64 / arm64 / armv7；32 位 armv7 需 sing-box 官方提供对应构建。
-- sing-box 全版本客户端（含 NekoBox）连 Xray ≥26.9.8 的 Reality 节点必失败（`reality verification failed`），与 uTLS 指纹无关：服务端要求 ClientHello 携带 X25519MLKEM768 密钥份额，而 sing-box 在 `common/tls/reality_client.go` 的 `ClientHandshake` 里会把该份额从 SupportedCurves 与 KeyShare 扩展中主动滤掉再发出（2025-05 commit `dbdcce20a8` 引入，utls 的 Chrome 指纹本身其实带了这个份额）；第三方修复分支 `thatssoheil/sing-box@fix/reality-client-mlkem-keyshare`（commit `87f2d718a`，17 行删除）已对 Xray 26.9.30 与 26.6.27 双向验证通过且无回退，但上游 SagerNet/sing-box#4520 仍 open、无 PR、无合并。临时方案：客户端改用 Xray 内核（v2rayNG），或服务端降级到 <26.9.8。
 
 ## 许可证
 

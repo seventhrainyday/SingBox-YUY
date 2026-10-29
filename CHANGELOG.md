@@ -1,12 +1,17 @@
 # CHANGELOG
 
-## 未发布
+## v0.4.1（2026-10-29）
 
-### 修复
-- CI 容器矩阵全红修复（v0.4.0 推送后 5 个容器 job 全灭）：debian-11 切 archive.debian.org（bullseye EOL，security 源已归档）；debian-12/alpine/debian-11 补 shellcheck（tests/run.sh 缺失时直接 fail）；alpine 补 gcompat（glibc 动态链接的 sing-box 二进制在 musl 下 exit 127）；almalinux-9/rockylinux-9 加 epel-release + ShellCheck（EPEL 提供）。
+### 修复（重要）
+- **规则集下载地址全错，守护进程启动即 FATAL**：geosite 规则集仓库名误写为不存在的 `SagerNet/sing-box-geosite`（正确：`SagerNet/sing-geosite`）；AI 列表里的 `gemini`/`copilot` 条目在仓库中不存在（正确：`google-gemini`/`github-copilot`，sing-geosite 无微软 Copilot 条目故用 GitHub Copilot）。默认配置也中招（广告拦截集常开），拉不到规则集 sing-box 直接拒绝启动。已逐个 URL 验证返回 200，测试新增"全部 rule_set URL 返回 200"断言。
+- **sing-box ≥1.14 守护进程无法启动**：生成的配置给 DNS server 写了 `"detour": "direct"`，1.14 起这是运行时硬错误（`detour to an empty direct outbound makes no sense`），进程启动即退出；但 `sing-box check` 查不出来，OpenRC 后台启动还会假报 `[ok]`，极具迷惑性。已移除该字段（语义不变，DNS 本就走直连）；同时移除 1.14 已弃用、1.16 将删除的 rule_set `download_detour`。测试新增"守护进程真启动"用例（实际 `run` 二进制断言输出 `sing-box started` 且存活），堵住"只 check 不 run"的盲区。
+- **TUI 输错一个字符就退出**：降级菜单把任何无效输入都当作"退出"，包括中文输入法发出的全角数字（如 `３`）——用户选"3 添加节点"会直接看到"再见"退出。现改为：输入先清洗（去空白/回车、全角转半角），无效只提示重输，只有 `0`/EOF 才退出；`_pick_sni` 的序号、端口输入同步清洗。
+- **Alpine 可选包映射错误**：whiptail 在 Alpine 的包名是 `newt`（此前误写 whiptail）、qrencode 命令行工具在 `libqrencode-tools` 包里（此前误写 qrencode），导致这两个可选包在 Alpine 上永远装不上（只能用降级菜单、无二维码）。已对照 Alpine 3.21 仓库索引修正映射。
 
-### 文档
-- README 已知限制新增条目：sing-box 全版本客户端（含 NekoBox）连 Xray ≥26.9.8 的 Reality 节点必失败，与 uTLS 指纹无关——服务端要求 ClientHello 携带 X25519MLKEM768 密钥份额，sing-box 的 Reality 客户端层会将其丢弃（上游 SagerNet/sing-box#4520 仍 open）；临时方案：客户端改用 Xray 内核（v2rayNG），或服务端降级到 <26.9.8。
+### 优化
+- 服务（systemd/OpenRC）内置 `GOMEMLIMIT=48MiB` + `GOGC=50` 软限制，抑制负载下 Go 堆膨胀。实测 sing-box 1.14.4 空载 RSS 约 59MB（规则集真加载后测得；默认 1 个集与全解锁 13 个集几乎无差，瓶颈是 sing-box 本体而非规则集）——**64MB 整机内存不足以稳定运行，128MB 起较稳**。
+- 生成配置开启 `experimental.cache_file`：重启不再重新下载规则集（实测第二次启动零下载），小机器启动更快更省。
+- `sb install` 在拒绝重装二进制时不再直接退出，改为刷新配置与服务定义并重启服务——脚本升级后老用户选 N 即可完成配置/服务迁移（本次 DNS 修复就走这条路）。
 
 ## v0.4.0（2026-10-09）
 

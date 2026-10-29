@@ -26,9 +26,9 @@ CONFIG_JSON = os.path.join(SB_ETC, "config.json")
 
 STREAM_GEOSITES = ["netflix", "youtube", "disney", "hbo", "hulu",
                    "primevideo", "spotify", "tiktok"]
-AI_GEOSITES = ["openai", "anthropic", "gemini", "copilot"]
+AI_GEOSITES = ["openai", "anthropic", "google-gemini", "github-copilot"]
 ADS_GEOSITE = "category-ads-all"
-SRS_URL = ("https://raw.githubusercontent.com/SagerNet/sing-box-geosite"
+SRS_URL = ("https://raw.githubusercontent.com/SagerNet/sing-geosite"
            "/rule-set/geosite-{name}.srs")
 
 
@@ -217,12 +217,13 @@ def build_route(settings):
         })
         needed.update(gs)
 
+    # download_detour 不再显式设置：route.final 本就是 direct；
+    # 且该字段在 sing-box 1.14 已弃用、1.16 移除
     rule_set = [{
         "type": "remote",
         "tag": "geosite-" + n,
         "format": "binary",
         "url": SRS_URL.format(name=n),
-        "download_detour": "direct",
     } for n in sorted(needed)]
 
     return {
@@ -277,8 +278,10 @@ def build_server_config(nodes, settings):
         "log": {"level": "info", "timestamp": True},
         "dns": {
             "servers": [
+                # 注意：不要给 dns server 加 "detour": "direct"——sing-box >= 1.14
+                # 会以 "detour to an empty direct outbound" 为由拒绝启动（check 查不出）
                 {"type": "udp", "tag": "dns-direct",
-                 "server": "223.5.5.5", "detour": "direct"}
+                 "server": "223.5.5.5"}
             ],
             "final": "dns-direct",
             "strategy": "prefer_ipv4",
@@ -289,6 +292,14 @@ def build_server_config(nodes, settings):
     }
     if endpoints:
         cfg["endpoints"] = endpoints
+    # 规则集下载缓存：重启时不再重新下载/解析全部 .srs，
+    # 小内存机器上能省一笔明显的启动内存与时间
+    cfg["experimental"] = {
+        "cache_file": {
+            "enabled": True,
+            "path": os.path.join(SB_ETC, "cache.db"),
+        }
+    }
     return cfg
 
 

@@ -813,6 +813,124 @@ else
     printf '[SKIP] 无 util-linux script，跳过 TUI 新路径测试\n'
 fi
 
+echo "=== [12/12] v0.4.1 回归：守护进程真启动 / 输入清洗 / Alpine 包名映射 ==="
+T12="$TESTDIR/t12"; rm -rf "$T12"; mkdir -p "$T12/etc" "$T12/home"
+printf '[]' > "$T12/etc/nodes.json"; printf '{}' > "$T12/etc/settings.json"
+
+# ---- 12.1 builder 输出：dns 无 detour、rule_set 无 download_detour、cache_file 开启 ----
+SB_ETC="$T12/etc" python3 "$PROJ/lib/builder.py" >/dev/null 2>&1
+python3 - "$T12/etc/config.json" <<'EOF' && ok "默认配置 dns 无 detour 且 cache_file 开启" || fail "默认配置 dns/cache_file 断言失败"
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+assert "detour" not in cfg["dns"]["servers"][0], "dns server 不应有 detour（1.14 运行时硬错误）"
+assert cfg["experimental"]["cache_file"]["enabled"] is True
+for rs in cfg["route"].get("rule_set", []):
+    assert "download_detour" not in rs, "rule_set 不应有 download_detour（1.14 已弃用）"
+EOF
+
+# ---- 12.2 规则集 URL 全量可达 + 守护进程真启动 ----
+# URL 断言：解锁配置里每个 remote rule-set 都必须返回 200
+#（仓库名/条目名写错时 check 发现不了、run 才会 FATAL，靠这个提前抓）
+mkdir -p "$T12/etcU"
+printf '[]' > "$T12/etcU/nodes.json"; printf '{"unlock": true}' > "$T12/etcU/settings.json"
+SB_ETC="$T12/etcU" python3 "$PROJ/lib/builder.py" >/dev/null 2>&1
+urls=$(jq -r '.route.rule_set[].url' "$T12/etcU/config.json")
+reachable=0; bad=0
+for u in $urls; do
+    code=$(curl -fsS -m 8 -o /dev/null -w '%{http_code}' "$u" 2>/dev/null || echo 000)
+    if [ "$code" = "200" ]; then reachable=1; else bad=1; echo "  rule_set URL 不可达（$code）：$u"; fi
+done
+if [ "$reachable" = "0" ]; then
+    printf '[SKIP] 无网络，跳过规则集 URL 与真启动测试\n'
+elif [ "$bad" = "0" ]; then
+    ok "全部 rule_set URL 返回 200（解锁全集）"
+else
+    fail "存在不可达的 rule_set URL"
+fi
+
+# 真启动：check 查不出的运行时错误靠实际 run 兜底。
+# 测试副本把 dns server 换成 local 类型——仅因部分沙箱/CI 环境屏蔽公共 UDP DNS，
+# 正式配置仍用 223.5.5.5 不受影响；detour/URL 类错误与 DNS 类型无关，照样能抓。
+run_alive() { # $1=config $2=log
+    jq '.dns.servers=[{"type":"local","tag":"dns-direct"}]' "$1" > "$T12/runner.json"
+    "$SB_BIN" run -c "$T12/runner.json" > "$2" 2>&1 &
+    local pid=$!
+    local waited=0
+    while [ "$waited" -lt 25 ]; do
+        kill -0 "$pid" 2>/dev/null || break
+        grep -qa "sing-box started" "$2" 2>/dev/null && break
+        sleep 1; waited=$((waited + 1))
+    done
+    sleep 1
+    local alive=0
+    if kill -0 "$pid" 2>/dev/null && grep -qa "sing-box started" "$2" && ! grep -qa "FATAL" "$2"; then
+        alive=1
+    fi
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    [ "$alive" = "1" ]
+}
+if [ "$reachable" = "1" ]; then
+    if run_alive "$T12/etc/config.json" "$T12/run.log"; then
+        ok "默认配置守护进程真启动成功"
+    else
+        fail "默认配置守护进程真启动失败"
+    fi
+    # 加一个 reality 节点后再启动一次（有 inbound 的真实场景）
+    SB_HOME="$T12/home" SB_ETC="$T12/etc" bash "$PROJ/sb-mgr" add --proto reality --port 52052 --yes >/dev/null 2>&1
+    if run_alive "$T12/etc/config.json" "$T12/run2.log"; then
+        ok "带 reality 节点守护进程真启动成功"
+    else
+        fail "带 reality 节点守护进程真启动失败"
+    fi
+fi
+
+# ---- 12.3 _sanitize_choice 单元 ----
+sc() { bash -c '. "$0" >/dev/null 2>&1; _sanitize_choice "$1"' "$PROJ/lib/common.sh" "$1"; }
+[ "$(sc '３５２')" = "352" ] && ok "_sanitize_choice 全角数字转半角" || fail "_sanitize_choice 全角数字"
+[ "$(sc ' 3 ')" = "3" ] && ok "_sanitize_choice 去首尾空白" || fail "_sanitize_choice 去空白"
+
+# ---- 12.4 Alpine 包名映射 ----
+pn() { bash -c '. "$0" >/dev/null 2>&1; pkg_name "$1" "$2"' "$PROJ/lib/common.sh" "$1" "$2"; }
+[ "$(pn whiptail apk)" = "newt" ] && ok "pkg_name whiptail/apk=newt" || fail "pkg_name whiptail/apk"
+[ "$(pn qrencode apk)" = "libqrencode-tools" ] && ok "pkg_name qrencode/apk=libqrencode-tools" || fail "pkg_name qrencode/apk"
+
+# ---- 12.5 TUI 鲁棒性：垃圾输入不退出、全角数字可进菜单 ----
+if script -qec "true" /dev/null >/dev/null 2>&1; then
+    (
+        mkdir -p "$T12/bin"
+        for d in /usr/local/bin /usr/bin /bin; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*; do
+                b=${f##*/}
+                [ "$b" = whiptail ] && continue
+                ln -sf "$f" "$T12/bin/$b" 2>/dev/null || true
+            done
+        done
+        export PATH="$T12/bin:/usr/sbin:/sbin"
+        # 垃圾输入 x 只提示重输，随后 0 才退出
+        printf 'x\n0\n' > "$T12/tui1.in"
+        SB_HOME="$T12/home" SB_ETC="$T12/etc" \
+            script -qec "bash \"$PROJ/dist/sb\"" /dev/null < "$T12/tui1.in" > "$T12/tui1.out" 2>&1 || true
+        # 全角 ３ 应进入添加节点菜单，随后 0 返回、0 退出
+        printf '３\n0\n0\n' > "$T12/tui2.in"
+        SB_HOME="$T12/home" SB_ETC="$T12/etc" \
+            script -qec "bash \"$PROJ/dist/sb\"" /dev/null < "$T12/tui2.in" > "$T12/tui2.out" 2>&1 || true
+    ) || true
+    if grep -q "无效输入" "$T12/tui1.out" && grep -q "再见" "$T12/tui1.out"; then
+        ok "TUI 垃圾输入只提示重输不退出"
+    else
+        fail "TUI 垃圾输入处理异常"
+    fi
+    if grep -q "添加节点" "$T12/tui2.out"; then
+        ok "TUI 全角数字可正常进菜单"
+    else
+        fail "TUI 全角数字被误判"
+    fi
+else
+    printf '[SKIP] 无 util-linux script，跳过 TUI 鲁棒性测试\n'
+fi
+
 echo "----------------------------------------"
 printf '结果：%d 通过，%d 失败\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -27,6 +27,7 @@ _pick_sni() { # $1=已指定sni(可空) $2=yes模式(1非交互)
     for s in $SNI_RECOMMEND; do printf '  %d) %s\n' "$i" "$s" >&2; i=$((i+1)); done
     printf '  0) 自定义输入\n' >&2
     printf '输入序号 [1]：' >&2; read -r n
+    n=$(_sanitize_choice "$n")
     n="${n:-1}"
     if [ "$n" = "0" ]; then
         printf '输入自定义 SNI：' >&2; read -r sni
